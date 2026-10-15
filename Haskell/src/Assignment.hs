@@ -36,7 +36,9 @@ data Declaration
     | VariableDeclaration Identifier Domain
     deriving (Eq, Show)
 
-data Domain = Range Int Int
+data Domain  --Algebraic Data type for Domain
+    = Range Int Int -- Accept a range of integers from low to high ; Range 1 5 = [1,2,3,4,5]
+    | FiniteSet [Int] -- Accept a finite set of integers ; FiniteSet [1,3,5] = [1,3,5]
     deriving (Eq, Show)
 
 data Expr
@@ -105,7 +107,8 @@ search p = case remainingDeclarations p of
                 }
 
 domainValues :: ConstraintProblem -> Domain -> [Int]
-domainValues p (Range lo hi) = [lo..hi]
+domainValues _ (Range lo hi) = [lo..hi]
+domainValues _ (FiniteSet xs) = xs --Convert Domain into integer list that solver can access
 
 evalExpr :: ConstraintProblem -> Expr -> Maybe Int
 evalExpr p (IntLit n) = Just n
