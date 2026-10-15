@@ -3,6 +3,8 @@ module Assignment
     , Declaration (..)
     , Domain (..)
     , Expr (..)
+    , MacroInput (..)
+    , NumericMacro (..)
     , Constraint (..)
     , CompareOperator (..)
     , SolverGoal (..)
@@ -34,11 +36,18 @@ data ADT = ADT
 data Declaration
     = ConstantDeclaration Identifier Expr
     | VariableDeclaration Identifier Domain
+    | ArrayDeclaration Identifier Expr Domain
     deriving (Eq, Show)
 
 data Domain  --Algebraic Data type for Domain
     = Range Int Int -- Accept a range of integers from low to high ; Range 1 5 = [1,2,3,4,5]
     | FiniteSet [Int] -- Accept a finite set of integers ; FiniteSet [1,3,5] = [1,3,5]
+    deriving (Eq, Show)
+
+data MacroInput a = Explicit [a] | WholeArray Identifier | Generator Identifier Expr Expr a
+    deriving (Eq, Show)
+
+data NumericMacro = Sum | Minimum | Maximum
     deriving (Eq, Show)
 
 data Expr
@@ -50,12 +59,17 @@ data Expr
     | Div Expr Expr
     | Pow Expr Expr
     | Neg Expr
+    | NumericMacroExpr NumericMacro (MacroInput Expr)
+    | ArrayAccess Identifier Expr
     deriving (Eq, Show)
 
 data CompareOperator = OpEq   | OpNe | OpLt | OpLe | OpGt | OpGe
     deriving (Eq, Show)
 
 data Constraint = Compare CompareOperator Expr Expr
+    | All (MacroInput Constraint)
+    | Any (MacroInput Constraint)
+    | AllDifferent (MacroInput Expr)
     deriving (Eq, Show)
 
 data SolverGoal = Satisfy
@@ -111,6 +125,8 @@ search p = case remainingDeclarations p of
                 { remainingDeclarations = rest
                 , solvedVars = (name, v) : solvedVars p
                 }
+    
+    ArrayDeclaration _ _ _ : _ -> []
 
 domainValues :: ConstraintProblem -> Domain -> [Int]
 domainValues _ (Range lo hi) = [lo..hi]
@@ -131,9 +147,14 @@ evalExpr p (Pow a b) = do
     y <- evalExpr p b
     if y < 0 then Nothing else Just (x ^ y)
 evalExpr p (Neg a) = negate <$> evalExpr p a
+evalExpr _ (NumericMacroExpr _ _) = Nothing
+evalExpr _ (ArrayAccess _ _) = Nothing
 
 evalConstraint :: ConstraintProblem -> Constraint -> Maybe Bool
 evalConstraint p (Compare op a b) = applyCompare op <$> evalExpr p a <*> evalExpr p b
+evalConstraint _ (All _) = Nothing
+evalConstraint _ (Any _) = Nothing
+evalConstraint _ (AllDifferent _) = Nothing
 
 applyCompare :: CompareOperator -> Int -> Int -> Bool
 applyCompare OpEq = (==)
