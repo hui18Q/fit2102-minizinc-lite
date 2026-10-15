@@ -44,9 +44,15 @@ data Domain  --Algebraic Data type for Domain
 data Expr
     = IntLit Int
     | Var Identifier
+    | Add Expr Expr
+    | Sub Expr Expr
+    | Mul Expr Expr
+    | Div Expr Expr
+    | Pow Expr Expr
+    | Neg Expr
     deriving (Eq, Show)
 
-data CompareOperator = OpEq
+data CompareOperator = OpEq   | OpNe | OpLt | OpLe | OpGt | OpGe
     deriving (Eq, Show)
 
 data Constraint = Compare CompareOperator Expr Expr
@@ -111,14 +117,31 @@ domainValues _ (Range lo hi) = [lo..hi]
 domainValues _ (FiniteSet xs) = xs --Convert Domain into integer list that solver can access
 
 evalExpr :: ConstraintProblem -> Expr -> Maybe Int
-evalExpr p (IntLit n) = Just n
+evalExpr _ (IntLit n) = Just n
 evalExpr p (Var x) = lookup x (searchConstants p) <|> lookup x (solvedVars p)
+evalExpr p (Add a b) = (+) <$> evalExpr p a <*> evalExpr p b
+evalExpr p (Sub a b) = (-) <$> evalExpr p a <*> evalExpr p b
+evalExpr p (Mul a b) = (*) <$> evalExpr p a <*> evalExpr p b
+evalExpr p (Div a b) = do
+    x <- evalExpr p a
+    y <- evalExpr p b
+    if y == 0 then Nothing else Just (x `div` y)
+evalExpr p (Pow a b) = do
+    x <- evalExpr p a
+    y <- evalExpr p b
+    if y < 0 then Nothing else Just (x ^ y)
+evalExpr p (Neg a) = negate <$> evalExpr p a
 
 evalConstraint :: ConstraintProblem -> Constraint -> Maybe Bool
 evalConstraint p (Compare op a b) = applyCompare op <$> evalExpr p a <*> evalExpr p b
 
 applyCompare :: CompareOperator -> Int -> Int -> Bool
 applyCompare OpEq = (==)
+applyCompare OpNe = (/=)
+applyCompare OpLt = (<)
+applyCompare OpLe = (<=)
+applyCompare OpGt = (>)
+applyCompare OpGe = (>=)
 
 allSatisfied :: ConstraintProblem -> Bool
 allSatisfied p = all ((== Just True) . evalConstraint p) (searchConstraints p)
