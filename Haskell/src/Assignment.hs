@@ -42,6 +42,7 @@ data Declaration
 data Domain  --Algebraic Data type for Domain
     = Range Int Int -- Accept a range of integers from low to high ; Range 1 5 = [1,2,3,4,5]
     | FiniteSet [Int] -- Accept a finite set of integers ; FiniteSet [1,3,5] = [1,3,5]
+    | ExprRange Expr Expr
     deriving (Eq, Show)
 
 data MacroInput a = Explicit [a] | WholeArray Identifier | Generator Identifier Expr Expr a
@@ -73,6 +74,8 @@ data Constraint = Compare CompareOperator Expr Expr
     deriving (Eq, Show)
 
 data SolverGoal = Satisfy
+    | Minimize Expr
+    | Maximize Expr
     deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -131,6 +134,10 @@ search p = case remainingDeclarations p of
 domainValues :: ConstraintProblem -> Domain -> [Int]
 domainValues _ (Range lo hi) = [lo..hi]
 domainValues _ (FiniteSet xs) = xs --Convert Domain into integer list that solver can access
+domainValues p (ExprRange lo hi) =
+    case (evalExpr p lo, evalExpr p hi) of
+        (Just lower, Just upper) -> [lower..upper]
+        _ -> []
 
 evalExpr :: ConstraintProblem -> Expr -> Maybe Int
 evalExpr _ (IntLit n) = Just n
