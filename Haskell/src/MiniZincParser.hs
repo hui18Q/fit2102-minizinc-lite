@@ -2,10 +2,11 @@ module MiniZincParser
     ( miniZincParser
     ) where
 
-import Control.Applicative (many, some)
+import Control.Applicative (many, some, (<|>))
 import Data.Char (isAlphaNum)
+import Data.List (nub)
 import Instances (ParseError (UnexpectedString), Parser)
-import Parser (failed, alpha, digit, satisfy, stringTok, tok)
+import Parser (alpha, digit, failed, satisfy, sepBy1, stringTok, tok)
 
 import MiniZincADT
 
@@ -53,6 +54,81 @@ keyword expected = do
 -- Parses one or more digits as a non-negative integer.
 natural :: Parser Int
 natural = tok (read <$> some digit)
+
+--------------------------------------------------------------------------------
+-- Domains and declarations
+--------------------------------------------------------------------------------
+
+-- Environment of previously declared constants.
+type Constants = [(Identifier, Int)]
+
+-- Parses an optional leading minus sign.
+signed :: Parser Int -> Parser Int
+signed p = negate <$> (symbol "-" *> p) <|> p
+
+-- Parses a signed integer literal.
+signedInteger :: Parser Int
+signedInteger = signed natural
+
+-- Looks up a previously declared constant.
+constantValue :: Constants -> Parser Int
+constantValue constants = do
+    name <- identifier
+    case lookup name constants of
+        Just value -> pure value
+        Nothing -> failed (UnexpectedString name)
+
+-- Parses and resolves an integer domain bound.
+domainBound :: Constants -> Parser Int
+domainBound constants =
+    signed (natural <|> constantValue constants)
+
+-- Checks whether a list contains duplicate values.
+hasDuplicates :: Eq a => [a] -> Bool
+hasDuplicates xs = length xs /= length (nub xs)
+
+-- Parses an inclusive integer range.
+rangeParser :: Constants -> Parser Domain
+rangeParser constants = do
+    lo <- domainBound constants
+    _ <- symbol ".."
+    hi <- domainBound constants
+    if lo <= hi
+        then pure (Range lo hi)
+        else failed (UnexpectedString "Invalid range")
+
+-- Parses a finite set containing distinct integers.
+finiteSetParser :: Parser Domain
+finiteSetParser = do
+    _ <- symbol "{"
+    values <- signedInteger `sepBy1` symbol ","
+    _ <- symbol "}"
+    if hasDuplicates values
+        then failed (UnexpectedString "Duplicate set values")
+        else pure (FiniteSet values)
+
+-- Parses either a range or a finite set.
+domainParser :: Constants -> Parser Domain
+domainParser constants =
+    rangeParser constants <|> finiteSetParser
+
+-- Parses an integer constant declaration, currently supports signed integer literals only.
+constantDeclaration :: Parser Declaration
+constantDeclaration =
+    ConstantDeclaration
+        <$> (keyword "int" *> symbol ":" *> identifier)
+        <*> (symbol "=" *>
+             (IntLit <$> signedInteger) <* symbol ";")
+
+-- Parses a variable declaration with its domain.
+variableDeclaration :: Constants -> Parser Declaration
+variableDeclaration constants = do
+    _ <- keyword "var"
+    dom <- domainParser constants
+    _ <- symbol ":"
+    name <- identifier
+    _ <- symbol ";"
+    pure (VariableDeclaration name dom)
 
 --------------------------------------------------------------------------------
 -- Parser
