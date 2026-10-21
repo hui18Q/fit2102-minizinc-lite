@@ -36,16 +36,20 @@ data ADT = ADT
 data Declaration
     = ConstantDeclaration Identifier Expr
     | VariableDeclaration Identifier Domain
-    | ArrayDeclaration Identifier Expr Domain
+    | ArrayDeclaration Identifier Int Domain
     deriving (Eq, Show)
 
-data Domain  --Algebraic Data type for Domain
-    = Range Int Int -- Accept a range of integers from low to high ; Range 1 5 = [1,2,3,4,5]
-    | FiniteSet [Int] -- Accept a finite set of integers ; FiniteSet [1,3,5] = [1,3,5]
-    | ExprRange Expr Expr
+-- Represents the allowed values of a variable.
+data Domain
+    = Range Int Int
+    | FiniteSet [Int]
     deriving (Eq, Show)
 
-data MacroInput a = Explicit [a] | WholeArray Identifier | Generator Identifier Expr Expr a
+-- Represents literal, array, and generator macro inputs.
+data MacroInput a
+    = Explicit [a]
+    | WholeArray Identifier
+    | Generator Identifier Domain a
     deriving (Eq, Show)
 
 data NumericMacro = Sum | Minimum | Maximum
@@ -64,7 +68,13 @@ data Expr
     | ArrayAccess Identifier Expr
     deriving (Eq, Show)
 
-data CompareOperator = OpEq   | OpNe | OpLt | OpLe | OpGt | OpGe
+data CompareOperator
+    = OpEq
+    | OpNe
+    | OpLt
+    | OpLe
+    | OpGt
+    | OpGe
     deriving (Eq, Show)
 
 data Constraint = Compare CompareOperator Expr Expr
@@ -122,22 +132,19 @@ search p = case remainingDeclarations p of
                         , searchConstants = (name, v) : searchConstants p
                         }
     VariableDeclaration name dom : rest -> do
-        v <- domainValues p dom
+        v <- domainValues dom
         search
             p
                 { remainingDeclarations = rest
                 , solvedVars = (name, v) : solvedVars p
                 }
-    
+
     ArrayDeclaration _ _ _ : _ -> []
 
-domainValues :: ConstraintProblem -> Domain -> [Int]
-domainValues _ (Range lo hi) = [lo..hi]
-domainValues _ (FiniteSet xs) = xs --Convert Domain into integer list that solver can access
-domainValues p (ExprRange lo hi) =
-    case (evalExpr p lo, evalExpr p hi) of
-        (Just lower, Just upper) -> [lower..upper]
-        _ -> []
+-- Returns the values allowed by a variable's domain.
+domainValues :: Domain -> [Int]
+domainValues (Range lo hi) = [lo..hi]
+domainValues (FiniteSet xs) = xs
 
 evalExpr :: ConstraintProblem -> Expr -> Maybe Int
 evalExpr _ (IntLit n) = Just n
@@ -158,7 +165,8 @@ evalExpr _ (NumericMacroExpr _ _) = Nothing
 evalExpr _ (ArrayAccess _ _) = Nothing
 
 evalConstraint :: ConstraintProblem -> Constraint -> Maybe Bool
-evalConstraint p (Compare op a b) = applyCompare op <$> evalExpr p a <*> evalExpr p b
+evalConstraint p (Compare op a b) =
+    applyCompare op <$> evalExpr p a <*> evalExpr p b
 evalConstraint _ (All _) = Nothing
 evalConstraint _ (Any _) = Nothing
 evalConstraint _ (AllDifferent _) = Nothing

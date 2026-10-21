@@ -8,5 +8,6 @@
     "cSpell.words": [
         "fmap",
         "Nonterminal"
-    ]
+    ],
+    "files.trimTrailingWhitespace": true
 }
