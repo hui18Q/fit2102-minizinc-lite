@@ -112,13 +112,12 @@ domainParser :: Constants -> Parser Domain
 domainParser constants =
     rangeParser constants <|> finiteSetParser
 
--- Parses an integer constant declaration, currently supports signed integer literals only.
+-- Parses a constant declaration containing an expression.
 constantDeclaration :: Parser Declaration
 constantDeclaration =
     ConstantDeclaration
         <$> (keyword "int" *> symbol ":" *> identifier)
-        <*> (symbol "=" *>
-             (IntLit <$> signedInteger) <* symbol ";")
+        <*> (symbol "=" *> expressionParser <* symbol ";")
 
 -- Parses a variable declaration with its domain.
 variableDeclaration :: Constants -> Parser Declaration
@@ -129,6 +128,65 @@ variableDeclaration constants = do
     name <- identifier
     _ <- symbol ";"
     pure (VariableDeclaration name dom)
+
+--------------------------------------------------------------------------------
+-- Arithmetic expressions
+--------------------------------------------------------------------------------
+
+-- Parses an arithmetic expression.
+expressionParser :: Parser Expr
+expressionParser = additionParser
+
+-- Parses addition and subtraction from left to right.
+additionParser :: Parser Expr
+additionParser =
+    chainLeft multiplicationParser additionOperator
+
+-- Parses multiplication and division from left to right.
+multiplicationParser :: Parser Expr
+multiplicationParser =
+    chainLeft unaryParser multiplicationOperator
+
+-- Parses prefix negation.
+unaryParser :: Parser Expr
+unaryParser =
+    (Neg <$> (symbol "-" *> unaryParser))
+        <|> powerParser
+
+-- Parses powers with right associativity.
+powerParser :: Parser Expr
+powerParser = do
+    base <- atomParser
+    (Pow base <$> (symbol "^" *> unaryParser))
+        <|> pure base
+
+-- Parses a literal, variable, or parenthesised expression.
+atomParser :: Parser Expr
+atomParser =
+    (IntLit <$> natural)
+        <|> (Var <$> identifier)
+        <|> (symbol "(" *> expressionParser <* symbol ")")
+
+-- Parses the addition and subtraction operators.
+additionOperator :: Parser (Expr -> Expr -> Expr)
+additionOperator =
+    (Add <$ symbol "+")
+        <|> (Sub <$ symbol "-")
+
+-- Parses the multiplication and division operators.
+multiplicationOperator :: Parser (Expr -> Expr -> Expr)
+multiplicationOperator =
+    (Mul <$ symbol "*")
+        <|> (Div <$ symbol "/")
+
+-- Parses terms and combines them left-associatively.
+chainLeft
+    :: Parser a
+    -> Parser (a -> a -> a)
+    -> Parser a
+chainLeft term operator = foldl apply <$> term <*> many ((,) <$> operator <*> term)
+  where
+    apply acc (combine, right) = combine acc right
 
 --------------------------------------------------------------------------------
 -- Parser

@@ -2,10 +2,10 @@ module MiniZincSolver
     ( solveProblem
     ) where
 
-import Control.Applicative ((<|>))
 import Data.Maybe (listToMaybe)
 
 import MiniZincADT
+import MiniZincEval (Env, evalExpr)
 
 --------------------------------------------------------------------------------
 -- Solver
@@ -35,7 +35,7 @@ search :: ConstraintProblem -> [[Binding]]
 search p = case remainingDeclarations p of
     [] -> if allSatisfied p then [reverse (solvedVars p)] else []
     ConstantDeclaration name e : rest ->
-        case evalExpr p e of
+        case evalExpr (environment p) e of
             Nothing -> []
             Just v ->
                 search
@@ -58,27 +58,18 @@ domainValues :: Domain -> [Int]
 domainValues (Range lo hi) = [lo..hi]
 domainValues (FiniteSet xs) = xs
 
-evalExpr :: ConstraintProblem -> Expr -> Maybe Int
-evalExpr _ (IntLit n) = Just n
-evalExpr p (Var x) = lookup x (searchConstants p) <|> lookup x (solvedVars p)
-evalExpr p (Add a b) = (+) <$> evalExpr p a <*> evalExpr p b
-evalExpr p (Sub a b) = (-) <$> evalExpr p a <*> evalExpr p b
-evalExpr p (Mul a b) = (*) <$> evalExpr p a <*> evalExpr p b
-evalExpr p (Div a b) = do
-    x <- evalExpr p a
-    y <- evalExpr p b
-    if y == 0 then Nothing else Just (x `div` y)
-evalExpr p (Pow a b) = do
-    x <- evalExpr p a
-    y <- evalExpr p b
-    if y < 0 then Nothing else Just (x ^ y)
-evalExpr p (Neg a) = negate <$> evalExpr p a
-evalExpr _ (NumericMacroExpr _ _) = Nothing
-evalExpr _ (ArrayAccess _ _) = Nothing
+-- Combines constants and assigned variables into an environment.
+environment :: ConstraintProblem -> Env
+environment p = solvedVars p ++ searchConstants p
 
+-- Evaluates a constraint; Nothing if it cannot be decided yet.
 evalConstraint :: ConstraintProblem -> Constraint -> Maybe Bool
 evalConstraint p (Compare op a b) =
-    applyCompare op <$> evalExpr p a <*> evalExpr p b
+    applyCompare op
+        <$> evalExpr env a
+        <*> evalExpr env b
+  where
+    env = environment p
 evalConstraint _ (All _) = Nothing
 evalConstraint _ (Any _) = Nothing
 evalConstraint _ (AllDifferent _) = Nothing
