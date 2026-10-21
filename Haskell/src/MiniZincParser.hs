@@ -189,6 +189,35 @@ chainLeft term operator = foldl apply <$> term <*> many ((,) <$> operator <*> te
     apply acc (combine, right) = combine acc right
 
 --------------------------------------------------------------------------------
+-- Comparison operators and constraints
+--------------------------------------------------------------------------------
+
+-- Parses a MiniZinc comparison operator, longer operators are tried first so "<=" is not read as "<".
+comparisonOperator :: Parser CompareOperator
+comparisonOperator =
+        (OpNe <$ symbol "!=")
+    <|> (OpLe <$ symbol "<=")
+    <|> (OpGe <$ symbol ">=")
+    <|> (OpEq <$ symbol "=")
+    <|> (OpLt <$ symbol "<")
+    <|> (OpGt <$ symbol ">")
+
+-- Parses two arithmetic expressions joined by a comparison, flip reorders the arguments: source is "lhs op rhs", but the constructor is Compare op lhs rhs.
+comparisonParser :: Parser Constraint
+comparisonParser =
+    flip Compare
+        <$> expressionParser
+        <*> comparisonOperator
+        <*> expressionParser
+
+-- Parses a comparison constraint statement.
+constraintParser :: Parser Constraint
+constraintParser =
+    keyword "constraint"
+        *> comparisonParser
+        <* symbol ";"
+
+--------------------------------------------------------------------------------
 -- Parser
 --------------------------------------------------------------------------------
 
