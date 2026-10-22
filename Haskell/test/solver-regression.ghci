@@ -1,0 +1,168 @@
+-- Solver regression tests for MiniZinc-Lite (Part B).
+-- Run from Haskell/:  stack ghci  then  :script test/solver-regression.ghci
+--
+-- AI declaration: this test script (helpers and test cases) was
+-- generated with Claude (Anthropic AI assistant) for FIT2102
+-- Assignment 2, then reviewed and run by me. Expected results were
+-- checked against the specification and the provided examples.
+
+:module + Assignment Instances
+import Data.List (sort)
+
+:{
+-- Prints the outcome of one named test and returns it.
+check :: (String, Bool) -> IO Bool
+check (name, ok) = do
+    putStrLn ((if ok then "PASS: " else "FAIL: ") ++ name)
+    pure ok
+
+-- Compares solutions ignoring binding order (any order is allowed).
+sameSolution :: Maybe [(String, Int)] -> [(String, Int)] -> Bool
+sameSolution actual expected = fmap sort actual == Just (sort expected)
+
+-- Parses then solves; Nothing if the text does not parse.
+solveText :: String -> Maybe (Maybe [(String, Int)])
+solveText src = case parse miniZincParser src of
+    Result "" adt -> Just (solveProblem adt)
+    _ -> Nothing
+
+-- Declares variables named by single letters over one range.
+vars :: String -> Int -> Int -> [Declaration]
+vars names lo hi = [VariableDeclaration [v] (Range lo hi) | v <- names]
+
+-- Runs a section of tests under a heading.
+section :: String -> [(String, Bool)] -> IO [Bool]
+section title tests = putStrLn ("=== " ++ title ++ " ===") >> mapM check tests
+:}
+
+:{
+searchTests :: [(String, Bool)]
+searchTests =
+    [ ( "Single constraint"
+      , sameSolution
+            (solveProblem (ADT (vars "x" 1 3) [Compare OpGt (Var "x") (IntLit 2)] Satisfy))
+            [("x", 3)] )
+    , ( "Two variables, first solution"
+      , sameSolution
+            (solveProblem (ADT (vars "xy" 1 3) [Compare OpEq (Add (Var "x") (Var "y")) (IntLit 4)] Satisfy))
+            [("x", 1), ("y", 3)] )
+    , ( "allDifferent"
+      , sameSolution
+            (solveProblem (ADT (vars "xy" 1 2) [AllDifferent (Explicit [Var "x", Var "y"])] Satisfy))
+            [("x", 1), ("y", 2)] )
+    , ( "Unsatisfiable"
+      , solveProblem (ADT (vars "x" 1 2) [Compare OpGt (Var "x") (IntLit 5)] Satisfy) == Nothing )
+    , ( "Division by zero invalidates every assignment"
+      , solveProblem (ADT (vars "x" 1 2) [Compare OpEq (Div (IntLit 1) (Sub (Var "x") (Var "x"))) (IntLit 1)] Satisfy) == Nothing )
+    , ( "Known True is re-checked at a full assignment"
+      , solveProblem (ADT [VariableDeclaration "x" (Range 1 1), VariableDeclaration "y" (Range 0 0)]
+            [Any (Explicit [Compare OpEq (Var "x") (IntLit 1), Compare OpEq (Div (IntLit 1) (Var "y")) (IntLit 0)])]
+            Satisfy) == Nothing )
+    , ( "Constant used in a constraint"
+      , sameSolution
+            (solveProblem (ADT [ConstantDeclaration "n" (IntLit 2), VariableDeclaration "x" (Range 1 3)] [Compare OpEq (Var "x") (Var "n")] Satisfy))
+            [("x", 2)] )
+    , ( "allDifferent with three variables"
+      , sameSolution
+            (solveProblem (ADT (vars "xyz" 1 3) [AllDifferent (Explicit [Var "x", Var "y", Var "z"]), Compare OpEq (Var "x") (IntLit 2)] Satisfy))
+            [("x", 2), ("y", 1), ("z", 3)] )
+    -- If incremental checking breaks, this test never finishes:
+    -- 10^8 full assignments would have to be enumerated.
+    , ( "Early pruning (8 variables, 10^8 assignments)"
+      , solveProblem (ADT (vars "abcdefgh" 1 10) [Compare OpGt (Var "a") (IntLit 10)] Satisfy) == Nothing )
+    ]
+:}
+
+:{
+optimisationTests :: [(String, Bool)]
+optimisationTests =
+    [ ( "Satisfy returns the first solution"
+      , sameSolution (solveProblem (ADT (vars "x" 1 5) [] Satisfy)) [("x", 1)] )
+    , ( "Minimize"
+      , sameSolution
+            (solveProblem (ADT (vars "x" 1 5) [Compare OpGt (Var "x") (IntLit 2)] (Minimize (Var "x"))))
+            [("x", 3)] )
+    , ( "Maximize"
+      , sameSolution (solveProblem (ADT (vars "x" 1 5) [] (Maximize (Var "x")))) [("x", 5)] )
+    , ( "Objective expression (x-3)*(x-3)"
+      , sameSolution
+            (solveProblem (ADT (vars "x" 1 5) [] (Minimize (Mul (Sub (Var "x") (IntLit 3)) (Sub (Var "x") (IntLit 3))))))
+            [("x", 3)] )
+    , ( "Objective uses a constant"
+      , sameSolution
+            (solveProblem (ADT [ConstantDeclaration "n" (IntLit 3), VariableDeclaration "x" (Range 1 5)] [] (Maximize (Mul (Var "x") (Var "n")))))
+            [("x", 5)] )
+    -- Several optimal solutions exist; any of them is accepted.
+    , ( "Optimal value with ties"
+      , fmap (sum . map snd)
+            (solveProblem (ADT (vars "xy" 1 3) [AllDifferent (Explicit [Var "x", Var "y"])] (Maximize (Add (Var "x") (Var "y")))))
+            == Just 5 )
+    , ( "Unsatisfiable optimisation"
+      , solveProblem (ADT (vars "x" 1 3) [Compare OpGt (Var "x") (IntLit 10)] (Maximize (Var "x"))) == Nothing )
+    ]
+:}
+
+:{
+edgeTests :: [(String, Bool)]
+edgeTests =
+    [ ( "No constraints", sameSolution (solveProblem (ADT (vars "x" 1 3) [] Satisfy)) [("x", 1)] )
+    , ( "No variables", solveProblem (ADT [] [] Satisfy) == Just [] )
+    , ( "Constant only", solveProblem (ADT [ConstantDeclaration "n" (IntLit 3)] [] Satisfy) == Just [] )
+    , ( "Contradictory constraints"
+      , solveProblem (ADT (vars "x" 1 5) [Compare OpGt (Var "x") (IntLit 3), Compare OpLt (Var "x") (IntLit 2)] Satisfy) == Nothing )
+    -- The parser rejects empty domains; these build the ADT directly.
+    , ( "Empty range (defensive)", solveProblem (ADT (vars "x" 3 1) [] Satisfy) == Nothing )
+    , ( "Empty finite set (defensive)", solveProblem (ADT [VariableDeclaration "x" (FiniteSet [])] [] Satisfy) == Nothing )
+    , ( "Division by zero in a constant constraint"
+      , solveProblem (ADT (vars "x" 1 3) [Compare OpEq (Div (IntLit 5) (IntLit 0)) (IntLit 2)] Satisfy) == Nothing )
+    , ( "Invalid objective only"
+      , solveProblem (ADT (vars "x" 0 0) [] (Maximize (Div (IntLit 10) (Var "x")))) == Nothing )
+    , ( "Skip an assignment with an invalid objective"
+      , sameSolution (solveProblem (ADT (vars "x" 0 2) [] (Maximize (Div (IntLit 10) (Var "x"))))) [("x", 1)] )
+    , ( "Division rounds down (-3 / 2 = -2)"
+      , sameSolution
+            (solveProblem (ADT (vars "x" (-3) 3) [Compare OpEq (Div (Var "x") (IntLit 2)) (IntLit (-2))] Satisfy))
+            [("x", -3)] )
+    , ( "allDifferent impossible", solveProblem (ADT (vars "xy" 1 1) [AllDifferent (Explicit [Var "x", Var "y"])] Satisfy) == Nothing )
+    , ( "any with an invalid element"
+      , solveProblem (ADT (vars "x" 0 0)
+            [Any (Explicit [Compare OpEq (IntLit 1) (IntLit 1), Compare OpEq (Div (IntLit 1) (Var "x")) (IntLit 0)])]
+            Satisfy) == Nothing )
+    , ( "Minimize over negative values", sameSolution (solveProblem (ADT (vars "x" (-3) 3) [] (Minimize (Var "x")))) [("x", -3)] )
+    , ( "Maximize a negated expression", sameSolution (solveProblem (ADT (vars "x" (-3) 3) [] (Maximize (Neg (Var "x"))))) [("x", -3)] )
+    , ( "Constraints decided at different depths"
+      , sameSolution
+            (solveProblem (ADT (vars "xy" 1 3) [Compare OpGt (Var "x") (IntLit 2), Compare OpEq (Var "y") (IntLit 1)] Satisfy))
+            [("x", 3), ("y", 1)] )
+    ]
+:}
+
+:{
+endToEndTests :: [(String, Bool)]
+endToEndTests =
+    [ ( "Constants, two constraints and maximize"
+      , fmap (fmap sort)
+            (solveText "int: n = 3; var 1..n: x; var 1..n: y; constraint x + y = n + 1; constraint x > y; solve maximize x * y;")
+            == Just (Just [("x", 3), ("y", 1)]) )
+    , ( "Boolean macro from text"
+      , solveText "var 1..3: x; var 1..3: y; constraint all([x != y, x + y = 4]); solve satisfy;"
+            == Just (Just [("x", 1), ("y", 3)]) )
+    , ( "Negative division from text"
+      , solveText "var -3..3: x; constraint x / 2 = -2; solve satisfy;"
+            == Just (Just [("x", -3)]) )
+    , ( "Numeric macros from text"
+      , fmap (fmap sort)
+            (solveText "var 1..4: a; var 1..4: b; constraint sum([a, b]) = 5; constraint max([a, b]) = 4; solve minimize a;")
+            == Just (Just [("a", 1), ("b", 4)]) )
+    , ( "Unsatisfiable model from text"
+      , solveText "var 1..2: x; var 1..2: y; var 1..2: z; constraint allDifferent([x, y, z]); solve satisfy;"
+            == Just Nothing )
+    ]
+:}
+
+searchResults <- section "SEARCH AND PRUNING" searchTests
+optimisationResults <- section "OPTIMISATION" optimisationTests
+edgeResults <- section "EDGE CASES" edgeTests
+endToEndResults <- section "END TO END (PARSE + SOLVE)" endToEndTests
+let results = searchResults ++ optimisationResults ++ edgeResults ++ endToEndResults
+putStrLn ("RESULT: " ++ show (length (filter id results)) ++ "/" ++ show (length results) ++ " tests passed")
