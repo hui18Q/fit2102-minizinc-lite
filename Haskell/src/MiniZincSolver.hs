@@ -2,7 +2,10 @@ module MiniZincSolver
     ( solveProblem
     ) where
 
+import Data.List (minimumBy)
+import Data.List.NonEmpty (nonEmpty)
 import Data.Maybe (listToMaybe)
+import Data.Ord (Down (..), comparing)
 
 import MiniZincADT
 import MiniZincEval
@@ -26,9 +29,16 @@ data ConstraintProblem = ConstraintProblem
     , searchConstraints :: [Constraint]
     }
 
+-- Finds a satisfying or optimal assignment for the model.
+-- Satisfy takes the first solution, so laziness stops the search
+-- early; optimisation has to compare every solution.
 solveProblem :: ADT -> Maybe [(String, Int)]
-solveProblem adt = listToMaybe (search problem)
+solveProblem adt = case solverGoal adt of
+    Satisfy -> solution <$> listToMaybe results
+    Minimize objective -> optimal id objective results
+    Maximize objective -> optimal Down objective results
   where
+    results = search problem
     problem =
         ConstraintProblem
             { searchConstants = []
@@ -40,11 +50,11 @@ solveProblem adt = listToMaybe (search problem)
 -- Explores assignments depth-first with the list monad. Every call
 -- first checks the constraints, so a branch is abandoned as soon as
 -- the latest assignment makes some constraint fail.
-search :: ConstraintProblem -> [[Binding]]
+search :: ConstraintProblem -> [ConstraintProblem]
 search p
     | not (consistent p) = []
     | otherwise = case remainingDeclarations p of
-        [] -> [reverse (solvedVars p) | allSatisfied p]
+        [] -> [p | allSatisfied p]
         ConstantDeclaration name e : rest ->
             case evalExpr (environment p) e of
                 Nothing -> []
@@ -67,6 +77,26 @@ search p
 -- Combines constants and assigned variables into an environment.
 environment :: ConstraintProblem -> Env
 environment p = solvedVars p ++ searchConstants p
+
+-- Decision variables in declaration order (constants are excluded).
+solution :: ConstraintProblem -> [Binding]
+solution = reverse . solvedVars
+
+-- Picks the solution whose objective value is smallest under key:
+-- id for minimize, Down for maximize (Down reverses the order).
+-- Assignments whose objective is invalid are skipped, like any
+-- other invalid assignment. nonEmpty means minimumBy never sees an
+-- empty list. Ties keep the first solution found.
+optimal
+    :: Ord k => (Int -> k) -> Expr -> [ConstraintProblem] -> Maybe [Binding]
+optimal key objective results =
+    solution . snd . minimumBy (comparing (key . fst)) <$> nonEmpty scored
+  where
+    scored =
+        [ (value, p)
+        | p <- results
+        , Just value <- [evalExpr (environment p) objective]
+        ]
 
 -- Evaluates all constraints under the current assignment.
 constraintResults :: ConstraintProblem -> [EvalStatus Bool]
