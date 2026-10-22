@@ -5,7 +5,13 @@ module MiniZincSolver
 import Data.Maybe (listToMaybe)
 
 import MiniZincADT
-import MiniZincEval (Env, domainValues, evalExpr)
+import MiniZincEval
+    ( Env
+    , EvalStatus (..)
+    , domainValues
+    , evalConstraintPartial
+    , evalExpr
+    )
 
 --------------------------------------------------------------------------------
 -- Solver
@@ -31,51 +37,48 @@ solveProblem adt = listToMaybe (search problem)
             , searchConstraints = constraints adt
             }
 
+-- Explores assignments depth-first with the list monad. Every call
+-- first checks the constraints, so a branch is abandoned as soon as
+-- the latest assignment makes some constraint fail.
 search :: ConstraintProblem -> [[Binding]]
-search p = case remainingDeclarations p of
-    [] -> if allSatisfied p then [reverse (solvedVars p)] else []
-    ConstantDeclaration name e : rest ->
-        case evalExpr (environment p) e of
-            Nothing -> []
-            Just v ->
-                search
-                    p
-                        { remainingDeclarations = rest
-                        , searchConstants = (name, v) : searchConstants p
-                        }
-    VariableDeclaration name dom : rest -> do
-        v <- domainValues dom
-        search
-            p
-                { remainingDeclarations = rest
-                , solvedVars = (name, v) : solvedVars p
-                }
-
-    ArrayDeclaration _ _ _ : _ -> []
+search p
+    | not (consistent p) = []
+    | otherwise = case remainingDeclarations p of
+        [] -> [reverse (solvedVars p) | allSatisfied p]
+        ConstantDeclaration name e : rest ->
+            case evalExpr (environment p) e of
+                Nothing -> []
+                Just v ->
+                    search
+                        p
+                            { remainingDeclarations = rest
+                            , searchConstants = (name, v) : searchConstants p
+                            }
+        VariableDeclaration name dom : rest -> do
+            v <- domainValues dom
+            search
+                p
+                    { remainingDeclarations = rest
+                    , solvedVars = (name, v) : solvedVars p
+                    }
+        -- Arrays are implemented in Part D.
+        ArrayDeclaration _ _ _ : _ -> []
 
 -- Combines constants and assigned variables into an environment.
 environment :: ConstraintProblem -> Env
 environment p = solvedVars p ++ searchConstants p
 
--- Evaluates a constraint; Nothing if it cannot be decided yet.
-evalConstraint :: ConstraintProblem -> Constraint -> Maybe Bool
-evalConstraint p (Compare op a b) =
-    applyCompare op
-        <$> evalExpr env a
-        <*> evalExpr env b
-  where
-    env = environment p
-evalConstraint _ (All _) = Nothing
-evalConstraint _ (Any _) = Nothing
-evalConstraint _ (AllDifferent _) = Nothing
+-- Evaluates all constraints under the current assignment.
+constraintResults :: ConstraintProblem -> [EvalStatus Bool]
+constraintResults p =
+    map (evalConstraintPartial (environment p)) (searchConstraints p)
 
-applyCompare :: CompareOperator -> Int -> Int -> Bool
-applyCompare OpEq = (==)
-applyCompare OpNe = (/=)
-applyCompare OpLt = (<)
-applyCompare OpLe = (<=)
-applyCompare OpGt = (>)
-applyCompare OpGe = (>=)
+-- Reject known failures and invalid evaluations.
+-- Unknown and Known True allow the search to continue.
+consistent :: ConstraintProblem -> Bool
+consistent = all (`notElem` [Known False, Invalid]) . constraintResults
 
+-- Accept only when every constraint is fully satisfied. Checked again
+-- once all variables are assigned, because Known True is not final.
 allSatisfied :: ConstraintProblem -> Bool
-allSatisfied p = all ((== Just True) . evalConstraint p) (searchConstraints p)
+allSatisfied = all (== Known True) . constraintResults
