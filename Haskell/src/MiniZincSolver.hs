@@ -12,6 +12,7 @@ import MiniZincEval
     ( Env
     , EvalStatus (..)
     , domainValues
+    , elementName
     , evalConstraintPartial
     , evalExpr
     )
@@ -21,6 +22,11 @@ import MiniZincEval
 --------------------------------------------------------------------------------
 
 type Binding = (Identifier, Int)
+
+-- Expands an array into individually named decision variables.
+expandArray :: Identifier -> Int -> Domain -> [Declaration]
+expandArray name len dom =
+    [VariableDeclaration (elementName name i) dom | i <- [1 .. len]]
 
 data ConstraintProblem = ConstraintProblem
     { searchConstants :: [Binding]
@@ -71,8 +77,10 @@ search p
                     { remainingDeclarations = rest
                     , solvedVars = (name, v) : solvedVars p
                     }
-        -- Arrays are implemented in Part D.
-        ArrayDeclaration _ _ _ : _ -> []
+        -- An array becomes one ordinary variable per element, so the
+        -- rest of the search and the output need no special cases.
+        ArrayDeclaration name len dom : rest ->
+            search p {remainingDeclarations = expandArray name len dom ++ rest}
 
 -- Combines constants and assigned variables into an environment.
 environment :: ConstraintProblem -> Env

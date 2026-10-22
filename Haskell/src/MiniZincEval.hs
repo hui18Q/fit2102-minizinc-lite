@@ -5,6 +5,7 @@ module MiniZincEval
     , evalExpr
     , evalConstraintPartial
     , domainValues
+    , elementName
     , hasDuplicates
     ) where
 
@@ -158,3 +159,9 @@ allDifferentStatus results
 -- True when a list contains a repeated element.
 hasDuplicates :: Eq a => [a] -> Bool
 hasDuplicates xs = length xs /= length (nub xs)
+
+-- The variable name of an array element, e.g. elementName "q" 1 = "q[1]".
+-- The solver uses it to name expanded elements and the evaluator to
+-- look them up, so both always agree. It is also the output format.
+elementName :: Identifier -> Int -> Identifier
+elementName name i = name ++ "[" ++ show i ++ "]"
