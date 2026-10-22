@@ -66,7 +66,7 @@ evalPartial arrays env = go
         power -> (^) <$> go a <*> power
     go (Neg a) = negate <$> go a
     go (NumericMacroExpr macro input) =
-        numericMacro macro (macroResults (evalPartial arrays) env input)
+        numericMacro macro (exprItems arrays env input)
     -- The index must be known before we know which element to read,
     -- so this step is sequential and cannot use <*>.
     go (ArrayAccess name index) = case go index of
@@ -98,13 +98,28 @@ evalExpr env expr = case evalPartial [] env expr of
 -- Evaluates every item of a macro input. A generator binds its
 -- loop variable at the front of the environment, so it shadows
 -- any outer name with the same identifier.
--- Part D: WholeArray must expand to q[1]..q[n].
 macroResults
     :: (Env -> a -> EvalStatus b) -> Env -> MacroInput a -> [EvalStatus b]
 macroResults eval env (Explicit items) = map (eval env) items
 macroResults eval env (Generator name dom item) =
     [eval ((name, v) : env) item | v <- domainValues dom]
-macroResults _ _ (WholeArray _) = [Unknown]
+-- A whole array of numbers is handled by exprItems; reaching here
+-- means a whole array where conditions are expected, e.g. all(q).
+macroResults _ _ (WholeArray _) = [Invalid]
+
+-- Results of the items of a numeric macro input. A whole array is
+-- read element by element; lists and generators use macroResults.
+exprItems :: ArrayLengths -> Env -> MacroInput Expr -> [EvalStatus Int]
+exprItems arrays env (WholeArray name) = arrayElements arrays env name
+exprItems arrays env input = macroResults (evalPartial arrays) env input
+
+-- Every element of an array in index order, so unassigned elements
+-- stay Unknown and partial pruning still works. Invalid if there is
+-- no such array (or its length is not positive).
+arrayElements :: ArrayLengths -> Env -> Identifier -> [EvalStatus Int]
+arrayElements arrays env name = case lookup name arrays of
+    Just len | len >= 1 -> [element arrays env name i | i <- [1 .. len]]
+    _ -> [Invalid]
 
 -- The values a domain allows, in increasing order for ranges.
 domainValues :: Domain -> [Int]
@@ -146,8 +161,7 @@ evalConstraintPartial arrays env = go
         allStatus (macroResults (evalConstraintPartial arrays) env input)
     go (Any input) =
         anyStatus (macroResults (evalConstraintPartial arrays) env input)
-    go (AllDifferent input) =
-        allDifferentStatus (macroResults (evalPartial arrays) env input)
+    go (AllDifferent input) = allDifferentStatus (exprItems arrays env input)
 
 -- True for an invalid result.
 isInvalid :: EvalStatus a -> Bool
