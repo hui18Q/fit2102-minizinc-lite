@@ -5,13 +5,12 @@ module MiniZincParser
 import Control.Applicative (many, some, (<|>))
 import Control.Monad (unless, when)
 import Data.Char (isAlphaNum)
-import Data.List (nub)
 import Instances (ParseError (UnexpectedString), Parser)
 import Parser
     ( alpha, digit, eof, failed, satisfy, sepBy1, spaces, stringTok, tok)
 
 import MiniZincADT
-import MiniZincEval (Env, evalExpr)
+import MiniZincEval (Env, evalExpr, hasDuplicates)
 
 --------------------------------------------------------------------------------
 -- Lexical parsers
@@ -85,10 +84,6 @@ constantValue constants = do
 domainBound :: Constants -> Parser Int
 domainBound constants =
     signed (natural <|> constantValue constants)
-
--- Checks whether a list contains duplicate values.
-hasDuplicates :: Eq a => [a] -> Bool
-hasDuplicates xs = length xs /= length (nub xs)
 
 -- Parses an inclusive integer range.
 rangeParser :: Constants -> Parser Domain

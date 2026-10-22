@@ -5,7 +5,7 @@ module MiniZincSolver
 import Data.Maybe (listToMaybe)
 
 import MiniZincADT
-import MiniZincEval (Env, evalExpr)
+import MiniZincEval (Env, domainValues, evalExpr)
 
 --------------------------------------------------------------------------------
 -- Solver
@@ -52,11 +52,6 @@ search p = case remainingDeclarations p of
                 }
 
     ArrayDeclaration _ _ _ : _ -> []
-
--- Returns the values allowed by a variable's domain.
-domainValues :: Domain -> [Int]
-domainValues (Range lo hi) = [lo..hi]
-domainValues (FiniteSet xs) = xs
 
 -- Combines constants and assigned variables into an environment.
 environment :: ConstraintProblem -> Env
