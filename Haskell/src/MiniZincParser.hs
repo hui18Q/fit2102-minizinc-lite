@@ -272,6 +272,24 @@ booleanMacroParser =
     <|> (AllDifferent <$> macroCall "allDifferent" expressionParser)
 
 --------------------------------------------------------------------------------
+-- Solve directives
+--------------------------------------------------------------------------------
+
+-- Parses one of the three supported solve goals.
+solveGoalParser :: Parser SolverGoal
+solveGoalParser =
+        (Satisfy <$ keyword "satisfy")
+    <|> (Minimize <$> (keyword "minimize" *> expressionParser))
+    <|> (Maximize <$> (keyword "maximize" *> expressionParser))
+
+-- Parses a complete solve directive.
+solveDirectiveParser :: Parser SolverGoal
+solveDirectiveParser =
+    keyword "solve"
+        *> solveGoalParser
+        <* symbol ";"
+
+--------------------------------------------------------------------------------
 -- Parser
 --------------------------------------------------------------------------------
 
