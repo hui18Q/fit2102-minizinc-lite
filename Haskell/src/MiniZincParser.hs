@@ -163,9 +163,10 @@ powerParser = do
 -- Parses a literal, variable, or parenthesised expression.
 atomParser :: Parser Expr
 atomParser =
-    (IntLit <$> natural)
+    numericMacroParser
+        <|> (IntLit <$> natural)
         <|> (Var <$> identifier)
-        <|> (symbol "(" *> expressionParser <* symbol ")")
+        <|> parenthesised expressionParser
 
 -- Parses the addition and subtraction operators.
 additionOperator :: Parser (Expr -> Expr -> Expr)
@@ -210,12 +211,65 @@ comparisonParser =
         <*> comparisonOperator
         <*> expressionParser
 
--- Parses a comparison constraint statement.
+-- Parses either a boolean macro or a comparison.
+constraintBody :: Parser Constraint
+constraintBody =
+    booleanMacroParser <|> comparisonParser
+
+-- Parses a complete constraint statement.
 constraintParser :: Parser Constraint
 constraintParser =
     keyword "constraint"
-        *> comparisonParser
+        *> constraintBody
         <* symbol ";"
+
+--------------------------------------------------------------------------------
+-- Macro parsers
+--------------------------------------------------------------------------------
+
+-- Parses p surrounded by parentheses.
+parenthesised :: Parser a -> Parser a
+parenthesised p = symbol "(" *> p <* symbol ")"
+
+-- Parses a non-empty list inside square brackets.
+listParser :: Parser a -> Parser [a]
+listParser item =
+    symbol "["
+        *> (item `sepBy1` symbol ",")
+        <* symbol "]"
+
+-- Parses the input of a macro (literal list form).
+macroInput :: Parser a -> Parser (MacroInput a)
+macroInput item = Explicit <$> listParser item
+
+-- Parses the parenthesised input of a macro call.
+-- Part D extends this for array and generator forms.
+macroArgs :: Parser a -> Parser (MacroInput a)
+macroArgs item = parenthesised (macroInput item)
+
+-- Parses a named macro call: name(input).
+macroCall :: String -> Parser a -> Parser (MacroInput a)
+macroCall name item = keyword name *> macroArgs item
+
+-- Parses the name of a numeric macro.
+numericMacroName :: Parser NumericMacro
+numericMacroName =
+        (Sum <$ keyword "sum")
+    <|> (Minimum <$ keyword "min")
+    <|> (Maximum <$ keyword "max")
+
+-- Parses a numeric macro as an expression.
+numericMacroParser :: Parser Expr
+numericMacroParser =
+    NumericMacroExpr <$> numericMacroName <*> macroArgs expressionParser
+
+-- Parses all, any and allDifferent constraints.
+-- Order is irrelevant: keyword checks the whole word.
+booleanMacroParser :: Parser Constraint
+booleanMacroParser =
+        (All <$> macroCall "all" comparisonParser)
+    <|> (Any <$> macroCall "any" comparisonParser)
+    <|> (AllDifferent <$> macroCall "allDifferent" expressionParser)
 
 --------------------------------------------------------------------------------
 -- Parser
