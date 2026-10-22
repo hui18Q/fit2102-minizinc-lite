@@ -1,5 +1,6 @@
 module MiniZincEval
     ( Env
+    , ArrayLengths
     , EvalStatus (..)
     , evalPartial
     , evalExpr
@@ -15,6 +16,9 @@ import MiniZincADT
 
 -- Name-to-value bindings used during evaluation.
 type Env = [(Identifier, Int)]
+
+-- Declared length of each array, used to check index bounds.
+type ArrayLengths = [(Identifier, Int)]
 
 -- Evaluation result under a partial assignment.
 data EvalStatus a
@@ -44,29 +48,46 @@ instance Applicative EvalStatus where
     Known f <*> Known x = Known (f x)
     _ <*> _ = Unknown
 
--- Evaluates an expression under a partial assignment.
-evalPartial :: Env -> Expr -> EvalStatus Int
-evalPartial _ (IntLit n) = Known n
-evalPartial env (Var name) = maybe Unknown Known (lookup name env)
-evalPartial env (Add a b) = (+) <$> evalPartial env a <*> evalPartial env b
-evalPartial env (Sub a b) = (-) <$> evalPartial env a <*> evalPartial env b
-evalPartial env (Mul a b) = (*) <$> evalPartial env a <*> evalPartial env b
-evalPartial env (Div a b) = case evalPartial env b of
-    Known 0 -> Invalid -- invalid even if the numerator is unknown
-    divisor -> div <$> evalPartial env a <*> divisor
-evalPartial env (Pow a b) = case evalPartial env b of
-    Known e | e < 0 -> Invalid
-    power -> (^) <$> evalPartial env a <*> power
-evalPartial env (Neg a) = negate <$> evalPartial env a
-evalPartial env (NumericMacroExpr macro input) =
-    numericMacro macro (macroResults evalPartial env input)
--- Array access is implemented in Part D.
-evalPartial _ (ArrayAccess _ _) = Unknown
+-- Evaluates an expression under a partial assignment. go captures
+-- arrays and env, so the recursive cases only pass sub-expressions.
+evalPartial :: ArrayLengths -> Env -> Expr -> EvalStatus Int
+evalPartial arrays env = go
+  where
+    go (IntLit n) = Known n
+    go (Var name) = maybe Unknown Known (lookup name env)
+    go (Add a b) = (+) <$> go a <*> go b
+    go (Sub a b) = (-) <$> go a <*> go b
+    go (Mul a b) = (*) <$> go a <*> go b
+    go (Div a b) = case go b of
+        Known 0 -> Invalid -- invalid even if the numerator is unknown
+        divisor -> div <$> go a <*> divisor
+    go (Pow a b) = case go b of
+        Known e | e < 0 -> Invalid
+        power -> (^) <$> go a <*> power
+    go (Neg a) = negate <$> go a
+    go (NumericMacroExpr macro input) =
+        numericMacro macro (macroResults (evalPartial arrays) env input)
+    -- The index must be known before we know which element to read,
+    -- so this step is sequential and cannot use <*>.
+    go (ArrayAccess name index) = case go index of
+        Known i -> element arrays env name i
+        Unknown -> Unknown
+        Invalid -> Invalid
+
+-- Reads element i of an array: Invalid if the index is out of
+-- bounds (even before the element is assigned), Unknown if the
+-- element is not assigned yet.
+element :: ArrayLengths -> Env -> Identifier -> Int -> EvalStatus Int
+element arrays env name i = case lookup name arrays of
+    Just len | 1 <= i && i <= len ->
+        maybe Unknown Known (lookup (elementName name i) env)
+    _ -> Invalid
 
 -- Evaluates a complete expression; Nothing if any part is
--- unassigned or invalid. Used by the parser for constants.
+-- unassigned or invalid. Used for constants, which cannot refer to
+-- arrays, so no array lengths are needed.
 evalExpr :: Env -> Expr -> Maybe Int
-evalExpr env expr = case evalPartial env expr of
+evalExpr env expr = case evalPartial [] env expr of
     Known value -> Just value
     _ -> Nothing
 
@@ -115,15 +136,18 @@ applyCompare OpGe = (>=)
 -- Known True is not final: an unknown part may still become
 -- Invalid, so the solver must re-check every constraint once
 -- all variables are assigned. Known False and Invalid are final.
-evalConstraintPartial :: Env -> Constraint -> EvalStatus Bool
-evalConstraintPartial env (Compare op a b) =
-    applyCompare op <$> evalPartial env a <*> evalPartial env b
-evalConstraintPartial env (All input) =
-    allStatus (macroResults evalConstraintPartial env input)
-evalConstraintPartial env (Any input) =
-    anyStatus (macroResults evalConstraintPartial env input)
-evalConstraintPartial env (AllDifferent input) =
-    allDifferentStatus (macroResults evalPartial env input)
+evalConstraintPartial
+    :: ArrayLengths -> Env -> Constraint -> EvalStatus Bool
+evalConstraintPartial arrays env = go
+  where
+    expr = evalPartial arrays env
+    go (Compare op a b) = applyCompare op <$> expr a <*> expr b
+    go (All input) =
+        allStatus (macroResults (evalConstraintPartial arrays) env input)
+    go (Any input) =
+        anyStatus (macroResults (evalConstraintPartial arrays) env input)
+    go (AllDifferent input) =
+        allDifferentStatus (macroResults (evalPartial arrays) env input)
 
 -- True for an invalid result.
 isInvalid :: EvalStatus a -> Bool

@@ -9,12 +9,14 @@ import Data.Ord (Down (..), comparing)
 
 import MiniZincADT
 import MiniZincEval
-    ( Env
+    ( ArrayLengths
+    , Env
     , EvalStatus (..)
     , domainValues
     , elementName
     , evalConstraintPartial
     , evalExpr
+    , evalPartial
     )
 
 --------------------------------------------------------------------------------
@@ -33,6 +35,7 @@ data ConstraintProblem = ConstraintProblem
     , solvedVars :: [Binding]
     , remainingDeclarations :: [Declaration]
     , searchConstraints :: [Constraint]
+    , searchArrays :: ArrayLengths -- fixed for the whole search
     }
 
 -- Finds a satisfying or optimal assignment for the model.
@@ -51,6 +54,8 @@ solveProblem adt = case solverGoal adt of
             , solvedVars = []
             , remainingDeclarations = declarations adt
             , searchConstraints = constraints adt
+            , searchArrays =
+                [(name, len) | ArrayDeclaration name len _ <- declarations adt]
             }
 
 -- Explores assignments depth-first with the list monad. Every call
@@ -103,13 +108,16 @@ optimal key objective results =
     scored =
         [ (value, p)
         | p <- results
-        , Just value <- [evalExpr (environment p) objective]
+        , Known value <-
+            [evalPartial (searchArrays p) (environment p) objective]
         ]
 
 -- Evaluates all constraints under the current assignment.
 constraintResults :: ConstraintProblem -> [EvalStatus Bool]
 constraintResults p =
-    map (evalConstraintPartial (environment p)) (searchConstraints p)
+    map
+        (evalConstraintPartial (searchArrays p) (environment p))
+        (searchConstraints p)
 
 -- Reject known failures and invalid evaluations.
 -- Unknown and Known True allow the search to continue.
