@@ -178,11 +178,21 @@ powerParser = do
     (Pow base <$> (symbol "^" *> unaryParser))
         <|> pure base
 
--- Parses a literal, variable, or parenthesised expression.
+-- Parses an indexed array element such as q[1] or q[i].
+arrayAccessParser :: Parser Expr
+arrayAccessParser =
+    ArrayAccess
+        <$> identifier
+        <*> (symbol "[" *> expressionParser <* symbol "]")
+
+-- Parses a literal, array element, variable, or parenthesised
+-- expression. q[...] is tried before a plain variable, otherwise
+-- q would be read on its own and leave [...] unconsumed.
 atomParser :: Parser Expr
 atomParser =
     numericMacroParser
         <|> (IntLit <$> natural)
+        <|> arrayAccessParser
         <|> (Var <$> identifier)
         <|> parenthesised expressionParser
 
@@ -311,53 +321,70 @@ solveDirectiveParser =
 -- Scope validation
 --------------------------------------------------------------------------------
 
--- Names declared so far, plus the values of declared constants.
+-- Names declared so far, the values of declared constants, and
+-- which names are arrays (so q and q[i] can be told apart).
 data Scope = Scope
     { scopeConstants :: Constants
     , scopeNames :: [Identifier]
+    , scopeArrays :: [Identifier]
     }
 
 -- The scope at the start of a program.
 emptyScope :: Scope
-emptyScope = Scope [] []
+emptyScope = Scope [] [] []
 
--- Identifiers referenced by an expression.
-exprVars :: Expr -> [Identifier]
-exprVars (IntLit _) = []
-exprVars (Var name) = [name]
-exprVars (Add a b) = exprVars a ++ exprVars b
-exprVars (Sub a b) = exprVars a ++ exprVars b
-exprVars (Mul a b) = exprVars a ++ exprVars b
-exprVars (Div a b) = exprVars a ++ exprVars b
-exprVars (Pow a b) = exprVars a ++ exprVars b
-exprVars (Neg a) = exprVars a
-exprVars (NumericMacroExpr _ input) = macroVars exprVars input
-exprVars (ArrayAccess name index) = name : exprVars index
+-- How a name is used: as a plain value (x) or as an array (q[i],
+-- or q passed whole to a macro).
+data Reference
+    = ScalarRef Identifier
+    | ArrayRef Identifier
+    deriving (Eq, Show)
 
--- Identifiers referenced by a macro input. A generator's binder is local to its body, so it is removed.
-macroVars :: (a -> [Identifier]) -> MacroInput a -> [Identifier]
-macroVars vars (Explicit items) = concatMap vars items
-macroVars _ (WholeArray name) = [name]
-macroVars vars (Generator name _ item) = filter (/= name) (vars item)
+-- References made by an expression.
+exprRefs :: Expr -> [Reference]
+exprRefs (IntLit _) = []
+exprRefs (Var name) = [ScalarRef name]
+exprRefs (Add a b) = exprRefs a ++ exprRefs b
+exprRefs (Sub a b) = exprRefs a ++ exprRefs b
+exprRefs (Mul a b) = exprRefs a ++ exprRefs b
+exprRefs (Div a b) = exprRefs a ++ exprRefs b
+exprRefs (Pow a b) = exprRefs a ++ exprRefs b
+exprRefs (Neg a) = exprRefs a
+exprRefs (NumericMacroExpr _ input) = macroRefs exprRefs input
+exprRefs (ArrayAccess name index) = ArrayRef name : exprRefs index
 
--- Identifiers referenced by a constraint.
-constraintVars :: Constraint -> [Identifier]
-constraintVars (Compare _ a b) = exprVars a ++ exprVars b
-constraintVars (All input) = macroVars constraintVars input
-constraintVars (Any input) = macroVars constraintVars input
-constraintVars (AllDifferent input) = macroVars exprVars input
+-- References made by a macro input. A generator's binder is local
+-- to its body, so it is removed.
+-- Part D: stricter generator checks (binder clashes).
+macroRefs :: (a -> [Reference]) -> MacroInput a -> [Reference]
+macroRefs refs (Explicit items) = concatMap refs items
+macroRefs _ (WholeArray name) = [ArrayRef name]
+macroRefs refs (Generator name _ item) =
+    filter (/= ScalarRef name) (refs item)
 
--- Identifiers referenced by a solve goal.
-goalVars :: SolverGoal -> [Identifier]
-goalVars Satisfy = []
-goalVars (Minimize e) = exprVars e
-goalVars (Maximize e) = exprVars e
+-- References made by a constraint.
+constraintRefs :: Constraint -> [Reference]
+constraintRefs (Compare _ a b) = exprRefs a ++ exprRefs b
+constraintRefs (All input) = macroRefs constraintRefs input
+constraintRefs (Any input) = macroRefs constraintRefs input
+constraintRefs (AllDifferent input) = macroRefs exprRefs input
 
--- Fails unless every name has already been declared.
-checkDeclared :: Scope -> [Identifier] -> Parser ()
-checkDeclared scope names =
-    unless (all (`elem` scopeNames scope) names)
-        (failed (UnexpectedString "Undeclared identifier"))
+-- References made by a solve goal.
+goalRefs :: SolverGoal -> [Reference]
+goalRefs Satisfy = []
+goalRefs (Minimize e) = exprRefs e
+goalRefs (Maximize e) = exprRefs e
+
+-- Fails unless every reference is declared and used correctly:
+-- a scalar use must not name an array, an array use must.
+checkReferences :: Scope -> [Reference] -> Parser ()
+checkReferences scope refs =
+    unless (all validRef refs)
+        (failed (UnexpectedString "Invalid identifier use"))
+  where
+    validRef (ScalarRef name) =
+        name `elem` scopeNames scope && name `notElem` scopeArrays scope
+    validRef (ArrayRef name) = name `elem` scopeArrays scope
 
 -- Records a new name, rejecting duplicates.
 addName :: Scope -> Identifier -> Parser Scope
@@ -375,7 +402,9 @@ declare scope (ConstantDeclaration name e) = do
     named <- addName scope name
     pure named {scopeConstants = (name, value) : scopeConstants named}
 declare scope (VariableDeclaration name _) = addName scope name
-declare scope (ArrayDeclaration name _ _) = addName scope name
+declare scope (ArrayDeclaration name _ _) = do
+    named <- addName scope name
+    pure named {scopeArrays = name : scopeArrays named}
 
 --------------------------------------------------------------------------------
 -- Full program
@@ -390,18 +419,18 @@ declarationParser scope =
   where
     constants = scopeConstants scope
 
--- Runs p, then checks that every name it references is declared.
-checked :: (a -> [Identifier]) -> Scope -> Parser a -> Parser a
-checked vars scope p = do
+-- Runs p, then checks every name it references (see Reference).
+checked :: (a -> [Reference]) -> Scope -> Parser a -> Parser a
+checked refs scope p = do
     x <- p
-    checkDeclared scope (vars x)
+    checkReferences scope (refs x)
     pure x
 
 -- Parses statements in any order until the final solve directive, which must be followed by end of input.
 -- A declaration changes the scope for later statements, so it needs monadic bind, but a constraint does not, so applicative style is enough.
 program :: Scope -> Parser ADT
 program scope =
-    (ADT [] [] <$> checked goalVars scope solveDirectiveParser <* eof)
+    (ADT [] [] <$> checked goalRefs scope solveDirectiveParser <* eof)
         <|> withDeclaration
         <|> withConstraint
   where
@@ -411,7 +440,7 @@ program scope =
         addDeclaration d <$> program next
     withConstraint =
         addConstraint
-            <$> checked constraintVars scope constraintParser
+            <$> checked constraintRefs scope constraintParser
             <*> program scope
     addDeclaration d adt = adt {declarations = d : declarations adt}
     addConstraint c adt = adt {constraints = c : constraints adt}
