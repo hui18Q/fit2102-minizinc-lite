@@ -239,6 +239,19 @@ arrayTests =
       , evalConstraintPartial [("q", 3)] [("q[1]", 2), ("q[2]", 2)] (AllDifferent (WholeArray "q")) == Known False )
     , ( "Partial whole-array allDifferent without a clash"
       , evalConstraintPartial [("q", 3)] [("q[1]", 1), ("q[2]", 2)] (AllDifferent (WholeArray "q")) == Unknown )
+    -- Spec p.15: an index computed by a generator that is out of bounds
+    -- must not be allowed, just like division by zero.
+    , ( "Generator index out of bounds"
+      , solveText "array[1..3] of var 1..3: q; constraint sum(i in 1..4)(q[i]) = 6; solve satisfy;"
+            == Just Nothing )
+    , ( "Generator inside a constant declaration"
+      , solveText "int: s = sum(i in 1..3)(i); var 1..s: x; constraint x > 5; solve satisfy;"
+            == Just (Just [("x", 6)]) )
+    -- all/any expect conditions; a whole int array is accepted by the
+    -- parser but can never be satisfied.
+    , ( "all over a whole int array has no solution"
+      , solveText "array[1..3] of var 1..3: q; constraint all(q); solve satisfy;"
+            == Just Nothing )
     , ( "Variable used as an index"
       , solveText "array[1..3] of var 1..3: q; var 1..3: x; constraint q[x] = 3; constraint x > 2; solve satisfy;"
             == Just (Just [("q[1]", 1), ("q[2]", 1), ("q[3]", 3), ("x", 3)]) )
@@ -250,5 +263,12 @@ optimisationResults <- section "OPTIMISATION" optimisationTests
 edgeResults <- section "EDGE CASES" edgeTests
 endToEndResults <- section "END TO END (PARSE + SOLVE)" endToEndTests
 arrayResults <- section "ARRAYS" arrayTests
-let results = searchResults ++ optimisationResults ++ edgeResults ++ endToEndResults ++ arrayResults
+
+-- The provided N-Queens example, read from the real input file and
+-- checked against every accepted answer in the expected output.
+nqueensSource <- readFile "examples/inputs/nqueens.mzn"
+nqueensAccepted <- map (sort . read) . filter (not . null) . lines <$> readFile "examples/expected_output/nqueens.out" :: IO [[(String, Int)]]
+nqueensResults <- section "NQUEENS (examples/inputs/nqueens.mzn)" [("Optimal solution is an accepted answer", fmap (fmap sort) (solveText nqueensSource) `elem` map (Just . Just) nqueensAccepted)]
+
+let results = searchResults ++ optimisationResults ++ edgeResults ++ endToEndResults ++ arrayResults ++ nqueensResults
 putStrLn ("RESULT: " ++ show (length (filter id results)) ++ "/" ++ show (length results) ++ " tests passed")

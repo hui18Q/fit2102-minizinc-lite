@@ -111,11 +111,11 @@ domainParser constants =
     rangeParser constants <|> finiteSetParser
 
 -- Parses a constant declaration containing an expression.
-constantDeclaration :: Parser Declaration
-constantDeclaration =
+constantDeclaration :: Constants -> Parser Declaration
+constantDeclaration constants =
     ConstantDeclaration
         <$> (keyword "int" *> symbol ":" *> identifier)
-        <*> (symbol "=" *> expressionParser <* symbol ";")
+        <*> (symbol "=" *> expressionParser constants <* symbol ";")
 
 -- Parses "var <domain>: <identifier>;", shared by plain and array
 -- declarations.
@@ -151,50 +151,52 @@ arrayDeclaration constants = do
 -- Arithmetic expressions
 --------------------------------------------------------------------------------
 
--- Parses an arithmetic expression.
-expressionParser :: Parser Expr
+-- Parses an arithmetic expression. The declared constants are passed
+-- down because a generator domain inside a macro, as in
+-- sum(i in 1..n)(q[i]), is resolved to literal bounds while parsing.
+expressionParser :: Constants -> Parser Expr
 expressionParser = additionParser
 
 -- Parses addition and subtraction from left to right.
-additionParser :: Parser Expr
-additionParser =
-    chainLeft multiplicationParser additionOperator
+additionParser :: Constants -> Parser Expr
+additionParser constants =
+    chainLeft (multiplicationParser constants) additionOperator
 
 -- Parses multiplication and division from left to right.
-multiplicationParser :: Parser Expr
-multiplicationParser =
-    chainLeft unaryParser multiplicationOperator
+multiplicationParser :: Constants -> Parser Expr
+multiplicationParser constants =
+    chainLeft (unaryParser constants) multiplicationOperator
 
 -- Parses prefix negation.
-unaryParser :: Parser Expr
-unaryParser =
-    (Neg <$> (symbol "-" *> unaryParser))
-        <|> powerParser
+unaryParser :: Constants -> Parser Expr
+unaryParser constants =
+    (Neg <$> (symbol "-" *> unaryParser constants))
+        <|> powerParser constants
 
 -- Parses powers with right associativity.
-powerParser :: Parser Expr
-powerParser = do
-    base <- atomParser
-    (Pow base <$> (symbol "^" *> unaryParser))
+powerParser :: Constants -> Parser Expr
+powerParser constants = do
+    base <- atomParser constants
+    (Pow base <$> (symbol "^" *> unaryParser constants))
         <|> pure base
 
 -- Parses an indexed array element such as q[1] or q[i].
-arrayAccessParser :: Parser Expr
-arrayAccessParser =
+arrayAccessParser :: Constants -> Parser Expr
+arrayAccessParser constants =
     ArrayAccess
         <$> identifier
-        <*> (symbol "[" *> expressionParser <* symbol "]")
+        <*> (symbol "[" *> expressionParser constants <* symbol "]")
 
 -- Parses a literal, array element, variable, or parenthesised
 -- expression. q[...] is tried before a plain variable, otherwise
 -- q would be read on its own and leave [...] unconsumed.
-atomParser :: Parser Expr
-atomParser =
-    numericMacroParser
+atomParser :: Constants -> Parser Expr
+atomParser constants =
+    numericMacroParser constants
         <|> (IntLit <$> natural)
-        <|> arrayAccessParser
+        <|> arrayAccessParser constants
         <|> (Var <$> identifier)
-        <|> parenthesised expressionParser
+        <|> parenthesised (expressionParser constants)
 
 -- Parses the addition and subtraction operators.
 additionOperator :: Parser (Expr -> Expr -> Expr)
@@ -231,24 +233,26 @@ comparisonOperator =
     <|> (OpLt <$ symbol "<")
     <|> (OpGt <$ symbol ">")
 
--- Parses two arithmetic expressions joined by a comparison, flip reorders the arguments: source is "lhs op rhs", but the constructor is Compare op lhs rhs.
-comparisonParser :: Parser Constraint
-comparisonParser =
+-- Parses two arithmetic expressions joined by a comparison. flip
+-- reorders the arguments: the source is "lhs op rhs", but the
+-- constructor is Compare op lhs rhs.
+comparisonParser :: Constants -> Parser Constraint
+comparisonParser constants =
     flip Compare
-        <$> expressionParser
+        <$> expressionParser constants
         <*> comparisonOperator
-        <*> expressionParser
+        <*> expressionParser constants
 
 -- Parses either a boolean macro or a comparison.
-constraintBody :: Parser Constraint
-constraintBody =
-    booleanMacroParser <|> comparisonParser
+constraintBody :: Constants -> Parser Constraint
+constraintBody constants =
+    booleanMacroParser constants <|> comparisonParser constants
 
 -- Parses a complete constraint statement.
-constraintParser :: Parser Constraint
-constraintParser =
+constraintParser :: Constants -> Parser Constraint
+constraintParser constants =
     keyword "constraint"
-        *> constraintBody
+        *> constraintBody constants
         <* symbol ";"
 
 --------------------------------------------------------------------------------
@@ -266,18 +270,31 @@ listParser item =
         *> (item `sepBy1` symbol ",")
         <* symbol "]"
 
--- Parses the input of a macro (literal list form).
+-- Parses a single-bracket macro input: a literal list [e1, e2, ...]
+-- or the name of a whole array, as in allDifferent(q).
 macroInput :: Parser a -> Parser (MacroInput a)
-macroInput item = Explicit <$> listParser item
+macroInput item =
+    (Explicit <$> listParser item) <|> (WholeArray <$> identifier)
 
--- Parses the parenthesised input of a macro call.
--- Part D extends this for array and generator forms.
-macroArgs :: Parser a -> Parser (MacroInput a)
-macroArgs item = parenthesised (macroInput item)
+-- Parses a generator such as (i in 1..n)(q[i] + i). The domain may
+-- use declared constants and may be a range or a finite set. The
+-- parts do not depend on each other, so applicative style is enough.
+generatorParser :: Constants -> Parser a -> Parser (MacroInput a)
+generatorParser constants item =
+    Generator
+        <$> (symbol "(" *> identifier)
+        <*> (keyword "in" *> domainParser constants <* symbol ")")
+        <*> parenthesised item
+
+-- Parses the input of a macro call in any of its three forms. Every
+-- macro goes through here, so all of them support every form.
+macroArgs :: Constants -> Parser a -> Parser (MacroInput a)
+macroArgs constants item =
+    generatorParser constants item <|> parenthesised (macroInput item)
 
 -- Parses a named macro call: name(input).
-macroCall :: String -> Parser a -> Parser (MacroInput a)
-macroCall name item = keyword name *> macroArgs item
+macroCall :: Constants -> String -> Parser a -> Parser (MacroInput a)
+macroCall constants name item = keyword name *> macroArgs constants item
 
 -- Parses the name of a numeric macro.
 numericMacroName :: Parser NumericMacro
@@ -287,34 +304,38 @@ numericMacroName =
     <|> (Maximum <$ keyword "max")
 
 -- Parses a numeric macro as an expression.
-numericMacroParser :: Parser Expr
-numericMacroParser =
-    NumericMacroExpr <$> numericMacroName <*> macroArgs expressionParser
+numericMacroParser :: Constants -> Parser Expr
+numericMacroParser constants =
+    NumericMacroExpr
+        <$> numericMacroName
+        <*> macroArgs constants (expressionParser constants)
 
 -- Parses all, any and allDifferent constraints.
 -- Order is irrelevant: keyword checks the whole word.
-booleanMacroParser :: Parser Constraint
-booleanMacroParser =
-        (All <$> macroCall "all" comparisonParser)
-    <|> (Any <$> macroCall "any" comparisonParser)
-    <|> (AllDifferent <$> macroCall "allDifferent" expressionParser)
+booleanMacroParser :: Constants -> Parser Constraint
+booleanMacroParser constants =
+        (All <$> call "all" (comparisonParser constants))
+    <|> (Any <$> call "any" (comparisonParser constants))
+    <|> (AllDifferent <$> call "allDifferent" (expressionParser constants))
+  where
+    call = macroCall constants
 
 --------------------------------------------------------------------------------
 -- Solve directives
 --------------------------------------------------------------------------------
 
 -- Parses one of the three supported solve goals.
-solveGoalParser :: Parser SolverGoal
-solveGoalParser =
+solveGoalParser :: Constants -> Parser SolverGoal
+solveGoalParser constants =
         (Satisfy <$ keyword "satisfy")
-    <|> (Minimize <$> (keyword "minimize" *> expressionParser))
-    <|> (Maximize <$> (keyword "maximize" *> expressionParser))
+    <|> (Minimize <$> (keyword "minimize" *> expressionParser constants))
+    <|> (Maximize <$> (keyword "maximize" *> expressionParser constants))
 
 -- Parses a complete solve directive.
-solveDirectiveParser :: Parser SolverGoal
-solveDirectiveParser =
+solveDirectiveParser :: Constants -> Parser SolverGoal
+solveDirectiveParser constants =
     keyword "solve"
-        *> solveGoalParser
+        *> solveGoalParser constants
         <* symbol ";"
 
 --------------------------------------------------------------------------------
@@ -353,9 +374,12 @@ exprRefs (Neg a) = exprRefs a
 exprRefs (NumericMacroExpr _ input) = macroRefs exprRefs input
 exprRefs (ArrayAccess name index) = ArrayRef name : exprRefs index
 
--- References made by a macro input. A generator's binder is local
--- to its body, so it is removed.
--- Part D: stricter generator checks (binder clashes).
+-- References made by a macro input. A generator binder is a local
+-- scalar, so its uses in the body are removed. It may reuse an outer
+-- name: inside the body it shadows that name, matching the evaluator,
+-- which puts the binder at the front of the environment. Array
+-- elements are stored as q[1], q[2], ..., so a binder named q does
+-- not hide the elements of an array q.
 macroRefs :: (a -> [Reference]) -> MacroInput a -> [Reference]
 macroRefs refs (Explicit items) = concatMap refs items
 macroRefs _ (WholeArray name) = [ArrayRef name]
@@ -413,7 +437,7 @@ declare scope (ArrayDeclaration name _ _) = do
 -- Parses any declaration, resolving domains with known constants.
 declarationParser :: Scope -> Parser Declaration
 declarationParser scope =
-    constantDeclaration
+    constantDeclaration constants
         <|> variableDeclaration constants
         <|> arrayDeclaration constants
   where
@@ -426,11 +450,13 @@ checked refs scope p = do
     checkReferences scope (refs x)
     pure x
 
--- Parses statements in any order until the final solve directive, which must be followed by end of input.
--- A declaration changes the scope for later statements, so it needs monadic bind, but a constraint does not, so applicative style is enough.
+-- Parses statements in any order until the final solve directive,
+-- which must be followed by end of input. A declaration changes the
+-- scope for later statements, so it needs monadic bind; a constraint
+-- does not, so applicative style is enough.
 program :: Scope -> Parser ADT
 program scope =
-    (ADT [] [] <$> checked goalRefs scope solveDirectiveParser <* eof)
+    (ADT [] [] <$> checked goalRefs scope solveDirective <* eof)
         <|> withDeclaration
         <|> withConstraint
   where
@@ -440,10 +466,12 @@ program scope =
         addDeclaration d <$> program next
     withConstraint =
         addConstraint
-            <$> checked constraintRefs scope constraintParser
+            <$> checked constraintRefs scope (constraintParser constants)
             <*> program scope
     addDeclaration d adt = adt {declarations = d : declarations adt}
     addConstraint c adt = adt {constraints = c : constraints adt}
+    constants = scopeConstants scope
+    solveDirective = solveDirectiveParser constants
 
 --------------------------------------------------------------------------------
 -- Parser

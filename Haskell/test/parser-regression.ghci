@@ -60,6 +60,14 @@ validTests =
     , ("Array access in the objective", parsesTo (ADT [ArrayDeclaration "q" 3 (Range 1 5)] [] (Minimize (ArrayAccess "q" (IntLit 1)))) "array[1..3] of var 1..5: q; solve minimize q[1];")
     , ("Array index from a constant expression", accepts "int: n = 2; array[1..3] of var 1..5: q; constraint q[n] = q[n+1]; solve satisfy;")
     , ("Out-of-bounds literal index parses (invalid at solve time)", accepts "array[1..3] of var 1..5: q; constraint q[5] = 2; solve satisfy;")
+    , ("Whole-array allDifferent", parsesTo (ADT [ArrayDeclaration "q" 3 (Range 1 3)] [AllDifferent (WholeArray "q")] Satisfy) "array[1..3] of var 1..3: q; constraint allDifferent(q); solve satisfy;")
+    , ("Whole-array numeric macros", accepts "array[1..3] of var 1..3: q; constraint sum(q) = 6; constraint min(q) = 1; constraint max(q) = 3; solve satisfy;")
+    , ("Numeric generator", accepts "array[1..3] of var 1..3: q; constraint sum(i in 1..3)(q[i]) = 6; solve satisfy;")
+    , ("Boolean generator", accepts "array[1..3] of var 1..3: q; constraint all(i in 1..3)(q[i] > 0); solve satisfy;")
+    , ("Generator bound from a constant is resolved", parsesTo (ADT [ConstantDeclaration "n" (IntLit 3), ArrayDeclaration "q" 3 (Range 1 3)] [AllDifferent (Generator "i" (Range 1 3) (Add (ArrayAccess "q" (Var "i")) (Var "i")))] Satisfy) "int: n = 3; array[1..n] of var 1..n: q; constraint allDifferent(i in 1..n)(q[i] + i); solve satisfy;")
+    , ("Generator with subtraction", accepts "int: n = 3; array[1..n] of var 1..n: q; constraint allDifferent(i in 1..n)(q[i] - i); solve satisfy;")
+    , ("Generator over a finite set", parsesTo (ADT [ArrayDeclaration "q" 3 (Range 1 3)] [AllDifferent (Generator "i" (FiniteSet [1, 3]) (ArrayAccess "q" (Var "i")))] Satisfy) "array[1..3] of var 1..3: q; constraint allDifferent(i in {1, 3})(q[i]); solve satisfy;")
+    , ("Generator binder may share the array name", accepts "array[1..3] of var 1..3: q; constraint sum(q in 1..3)(q[q]) = 6; solve satisfy;")
     ]
 :}
 
@@ -107,6 +115,13 @@ invalidTests =
     , ("Undeclared array access", rejects "constraint q[1] = 2; solve satisfy;")
     , ("Array mixed scalar and indexed use", rejects "array[1..3] of var 1..5: q; constraint q + q[1] = 5; solve satisfy;")
     , ("Undeclared name inside an index", rejects "array[1..3] of var 1..5: q; constraint q[y] = 2; solve satisfy;")
+    , ("Whole-array form needs an array", rejects "var 1..3: x; constraint allDifferent(x); solve satisfy;")
+    , ("Undeclared whole array", rejects "constraint allDifferent(q); solve satisfy;")
+    , ("Generator body uses an undeclared name", rejects "array[1..3] of var 1..3: q; constraint allDifferent(i in 1..3)(q[j]); solve satisfy;")
+    , ("Generator reversed range", rejects "array[1..3] of var 1..3: q; constraint allDifferent(i in 3..1)(q[i]); solve satisfy;")
+    , ("Generator bound from an undeclared constant", rejects "array[1..3] of var 1..3: q; constraint allDifferent(i in 1..n)(q[i]); solve satisfy;")
+    , ("Generator binder is not visible outside", rejects "array[1..3] of var 1..3: q; constraint allDifferent(i in 1..3)(q[i]); constraint i = 2; solve satisfy;")
+    , ("Generator with a duplicate set value", rejects "array[1..3] of var 1..3: q; constraint allDifferent(i in {1, 1})(q[i]); solve satisfy;")
     ]
 :}
 
