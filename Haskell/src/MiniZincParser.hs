@@ -117,15 +117,35 @@ constantDeclaration =
         <$> (keyword "int" *> symbol ":" *> identifier)
         <*> (symbol "=" *> expressionParser <* symbol ";")
 
+-- Parses "var <domain>: <identifier>;", shared by plain and array
+-- declarations.
+varBody :: Constants -> Parser (Domain, Identifier)
+varBody constants =
+    (,)
+        <$> (keyword "var" *> domainParser constants)
+        <*> (symbol ":" *> identifier <* symbol ";")
+
 -- Parses a variable declaration with its domain.
 variableDeclaration :: Constants -> Parser Declaration
-variableDeclaration constants = do
-    _ <- keyword "var"
-    dom <- domainParser constants
-    _ <- symbol ":"
-    name <- identifier
-    _ <- symbol ";"
-    pure (VariableDeclaration name dom)
+variableDeclaration constants =
+    (\(dom, name) -> VariableDeclaration name dom) <$> varBody constants
+
+-- Parses "array[1..<length>] of", returning the length. The lower
+-- bound must be the literal 1 and the length must be at least 1.
+arrayLength :: Constants -> Parser Int
+arrayLength constants = do
+    lower <- keyword "array" *> symbol "[" *> natural
+    len <- symbol ".." *> domainBound constants <* symbol "]" <* keyword "of"
+    unless (lower == 1 && len >= 1)
+        (failed (UnexpectedString "Invalid array bounds"))
+    pure len
+
+-- Parses an array declaration such as array[1..n] of var 1..n: q;
+arrayDeclaration :: Constants -> Parser Declaration
+arrayDeclaration constants = do
+    len <- arrayLength constants
+    (dom, name) <- varBody constants
+    pure (ArrayDeclaration name len dom)
 
 --------------------------------------------------------------------------------
 -- Arithmetic expressions
@@ -364,7 +384,11 @@ declare scope (ArrayDeclaration name _ _) = addName scope name
 -- Parses any declaration, resolving domains with known constants.
 declarationParser :: Scope -> Parser Declaration
 declarationParser scope =
-    constantDeclaration <|> variableDeclaration (scopeConstants scope)
+    constantDeclaration
+        <|> variableDeclaration constants
+        <|> arrayDeclaration constants
+  where
+    constants = scopeConstants scope
 
 -- Runs p, then checks that every name it references is declared.
 checked :: (a -> [Identifier]) -> Scope -> Parser a -> Parser a
