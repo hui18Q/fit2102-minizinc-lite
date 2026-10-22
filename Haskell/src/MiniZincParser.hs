@@ -3,12 +3,15 @@ module MiniZincParser
     ) where
 
 import Control.Applicative (many, some, (<|>))
+import Control.Monad (unless, when)
 import Data.Char (isAlphaNum)
 import Data.List (nub)
 import Instances (ParseError (UnexpectedString), Parser)
-import Parser (alpha, digit, failed, satisfy, sepBy1, stringTok, tok)
+import Parser
+    ( alpha, digit, eof, failed, satisfy, sepBy1, spaces, stringTok, tok)
 
 import MiniZincADT
+import MiniZincEval (Env, evalExpr)
 
 --------------------------------------------------------------------------------
 -- Lexical parsers
@@ -60,7 +63,7 @@ natural = tok (read <$> some digit)
 --------------------------------------------------------------------------------
 
 -- Environment of previously declared constants.
-type Constants = [(Identifier, Int)]
+type Constants = Env
 
 -- Parses an optional leading minus sign.
 signed :: Parser Int -> Parser Int
@@ -290,8 +293,114 @@ solveDirectiveParser =
         <* symbol ";"
 
 --------------------------------------------------------------------------------
+-- Scope validation
+--------------------------------------------------------------------------------
+
+-- Names declared so far, plus the values of declared constants.
+data Scope = Scope
+    { scopeConstants :: Constants
+    , scopeNames :: [Identifier]
+    }
+
+-- The scope at the start of a program.
+emptyScope :: Scope
+emptyScope = Scope [] []
+
+-- Identifiers referenced by an expression.
+exprVars :: Expr -> [Identifier]
+exprVars (IntLit _) = []
+exprVars (Var name) = [name]
+exprVars (Add a b) = exprVars a ++ exprVars b
+exprVars (Sub a b) = exprVars a ++ exprVars b
+exprVars (Mul a b) = exprVars a ++ exprVars b
+exprVars (Div a b) = exprVars a ++ exprVars b
+exprVars (Pow a b) = exprVars a ++ exprVars b
+exprVars (Neg a) = exprVars a
+exprVars (NumericMacroExpr _ input) = macroVars exprVars input
+exprVars (ArrayAccess name index) = name : exprVars index
+
+-- Identifiers referenced by a macro input. A generator's binder is local to its body, so it is removed.
+macroVars :: (a -> [Identifier]) -> MacroInput a -> [Identifier]
+macroVars vars (Explicit items) = concatMap vars items
+macroVars _ (WholeArray name) = [name]
+macroVars vars (Generator name _ item) = filter (/= name) (vars item)
+
+-- Identifiers referenced by a constraint.
+constraintVars :: Constraint -> [Identifier]
+constraintVars (Compare _ a b) = exprVars a ++ exprVars b
+constraintVars (All input) = macroVars constraintVars input
+constraintVars (Any input) = macroVars constraintVars input
+constraintVars (AllDifferent input) = macroVars exprVars input
+
+-- Identifiers referenced by a solve goal.
+goalVars :: SolverGoal -> [Identifier]
+goalVars Satisfy = []
+goalVars (Minimize e) = exprVars e
+goalVars (Maximize e) = exprVars e
+
+-- Fails unless every name has already been declared.
+checkDeclared :: Scope -> [Identifier] -> Parser ()
+checkDeclared scope names =
+    unless (all (`elem` scopeNames scope) names)
+        (failed (UnexpectedString "Undeclared identifier"))
+
+-- Records a new name, rejecting duplicates.
+addName :: Scope -> Identifier -> Parser Scope
+addName scope name = do
+    when (name `elem` scopeNames scope)
+        (failed (UnexpectedString ("Duplicate identifier " ++ name)))
+    pure scope {scopeNames = name : scopeNames scope}
+
+-- Adds a declaration to the scope. Constants are evaluated using earlier constants only, so references to variables, undeclared, names and division by zero are all rejected here.
+declare :: Scope -> Declaration -> Parser Scope
+declare scope (ConstantDeclaration name e) = do
+    value <-
+        maybe (failed (UnexpectedString "Invalid constant")) pure
+            (evalExpr (scopeConstants scope) e)
+    named <- addName scope name
+    pure named {scopeConstants = (name, value) : scopeConstants named}
+declare scope (VariableDeclaration name _) = addName scope name
+declare scope (ArrayDeclaration name _ _) = addName scope name
+
+--------------------------------------------------------------------------------
+-- Full program
+--------------------------------------------------------------------------------
+
+-- Parses any declaration, resolving domains with known constants.
+declarationParser :: Scope -> Parser Declaration
+declarationParser scope =
+    constantDeclaration <|> variableDeclaration (scopeConstants scope)
+
+-- Runs p, then checks that every name it references is declared.
+checked :: (a -> [Identifier]) -> Scope -> Parser a -> Parser a
+checked vars scope p = do
+    x <- p
+    checkDeclared scope (vars x)
+    pure x
+
+-- Parses statements in any order until the final solve directive, which must be followed by end of input.
+-- A declaration changes the scope for later statements, so it needs monadic bind, but a constraint does not, so applicative style is enough.
+program :: Scope -> Parser ADT
+program scope =
+    (ADT [] [] <$> checked goalVars scope solveDirectiveParser <* eof)
+        <|> withDeclaration
+        <|> withConstraint
+  where
+    withDeclaration = do
+        d <- declarationParser scope
+        next <- declare scope d
+        addDeclaration d <$> program next
+    withConstraint =
+        addConstraint
+            <$> checked constraintVars scope constraintParser
+            <*> program scope
+    addDeclaration d adt = adt {declarations = d : declarations adt}
+    addConstraint c adt = adt {constraints = c : constraints adt}
+
+--------------------------------------------------------------------------------
 -- Parser
 --------------------------------------------------------------------------------
 
+-- Parses a complete MiniZinc-Lite model.
 miniZincParser :: Parser ADT
-miniZincParser = failed (UnexpectedString "miniZincParser: not written yet")
+miniZincParser = spaces *> program emptyScope
