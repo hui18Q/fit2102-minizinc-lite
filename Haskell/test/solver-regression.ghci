@@ -304,11 +304,29 @@ endToEndResults <- section "END TO END (PARSE + SOLVE)" endToEndTests
 arrayResults <- section "ARRAYS" arrayTests
 validationResults <- section "VALIDATION (GENERATORS AND SPEC EXAMPLES)" validationTests
 
+:{
+-- Part C file contents (formatSolution is pure, so no file is written).
+saveFormatTests :: [(String, Bool)]
+saveFormatTests =
+    [ ( "Spec p.12 example file contents"
+      , formatSolution "2026-09-18T06-05-58" [("x", 1), ("y", 2)]
+            == "-- Generated: 2026-09-18T06-05-58\n\nx = 1;\ny = 2;\n" )
+    , ( "Array elements and negative values"
+      , formatSolution "T" [("q[1]", 2), ("q[2]", -3)]
+            == "-- Generated: T\n\nq[1] = 2;\nq[2] = -3;\n" )
+    , ( "Saving a solved model"
+      , fmap (fmap (formatSolution "T")) (solveText "var 1..3: x; constraint x > 2; solve satisfy;")
+            == Just (Just "-- Generated: T\n\nx = 3;\n") )
+    ]
+:}
+
+saveFormatResults <- section "SAVE FILE FORMAT (PART C)" saveFormatTests
+
 -- The provided N-Queens example, read from the real input file and
 -- checked against every accepted answer in the expected output.
 nqueensSource <- readFile "examples/inputs/nqueens.mzn"
 nqueensAccepted <- map (sort . read) . filter (not . null) . lines <$> readFile "examples/expected_output/nqueens.out" :: IO [[(String, Int)]]
 nqueensResults <- section "NQUEENS (examples/inputs/nqueens.mzn)" [("Optimal solution is an accepted answer", fmap (fmap sort) (solveText nqueensSource) `elem` map (Just . Just) nqueensAccepted)]
 
-let results = searchResults ++ optimisationResults ++ edgeResults ++ endToEndResults ++ arrayResults ++ validationResults ++ nqueensResults
+let results = searchResults ++ optimisationResults ++ edgeResults ++ endToEndResults ++ arrayResults ++ validationResults ++ saveFormatResults ++ nqueensResults
 putStrLn ("RESULT: " ++ show (length (filter id results)) ++ "/" ++ show (length results) ++ " tests passed")
