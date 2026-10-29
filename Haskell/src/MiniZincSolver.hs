@@ -8,6 +8,7 @@ import Data.Maybe (listToMaybe)
 import Data.Ord (Down (..), comparing)
 
 import MiniZincADT
+import MiniZincBounds (VarBounds, domainInterval, impossible)
 import MiniZincEval
     ( ArrayLengths
     , Env
@@ -25,6 +26,11 @@ import MiniZincEval
 
 type Binding = (Identifier, Int)
 
+-- Replaces an array declaration by its element declarations.
+expandDeclaration :: Declaration -> [Declaration]
+expandDeclaration (ArrayDeclaration name len dom) = expandArray name len dom
+expandDeclaration declaration = [declaration]
+
 -- Expands an array into individually named decision variables.
 expandArray :: Identifier -> Int -> Domain -> [Declaration]
 expandArray name len dom =
@@ -36,6 +42,7 @@ data ConstraintProblem = ConstraintProblem
     , remainingDeclarations :: [Declaration]
     , searchConstraints :: [Constraint]
     , searchArrays :: ArrayLengths -- fixed for the whole search
+    , searchBounds :: VarBounds -- domain interval of every variable
     }
 
 -- Finds a satisfying or optimal assignment for the model.
@@ -56,6 +63,12 @@ solveProblem adt = case solverGoal adt of
             , searchConstraints = constraints adt
             , searchArrays =
                 [(name, len) | ArrayDeclaration name len _ <- declarations adt]
+            , searchBounds =
+                [ (name, interval)
+                | VariableDeclaration name dom <-
+                    concatMap expandDeclaration (declarations adt)
+                , Just interval <- [domainInterval dom]
+                ]
             }
 
 -- Explores assignments depth-first with the list monad. Every call
@@ -119,10 +132,17 @@ constraintResults p =
         (evalConstraintPartial (searchArrays p) (environment p))
         (searchConstraints p)
 
--- Reject known failures and invalid evaluations.
--- Unknown and Known True allow the search to continue.
+-- Reject known failures and invalid evaluations. An Unknown
+-- constraint is also rejected when bounds reasoning proves it can no
+-- longer hold (Part E); bounds are only computed in that case.
 consistent :: ConstraintProblem -> Bool
-consistent = all (`notElem` [Known False, Invalid]) . constraintResults
+consistent p = and (zipWith viable (searchConstraints p) (constraintResults p))
+  where
+    viable constraint status =
+        status `notElem` [Known False, Invalid]
+            && not (status == Unknown && provedImpossible constraint)
+    provedImpossible =
+        impossible (searchArrays p) (searchBounds p) (environment p)
 
 -- Accept only when every constraint is fully satisfied. Checked again
 -- once all variables are assigned, because Known True is not final.

@@ -9,6 +9,7 @@
 :module + Assignment Instances
 import Data.List (sort)
 import MiniZincEval (EvalStatus (..), evalConstraintPartial)
+import MiniZincBounds (Interval (..), impossible)
 
 :{
 -- Prints the outcome of one named test and returns it.
@@ -322,11 +323,54 @@ saveFormatTests =
 
 saveFormatResults <- section "SAVE FILE FORMAT (PART C)" saveFormatTests
 
+:{
+-- Part E bounds reasoning. Pruning must only remove branches with no
+-- solution, so every answer below is the same as without bounds; the
+-- first two models were too slow to finish before (38.7s and >120s).
+boundsTests :: [(String, Bool)]
+boundsTests =
+    [ ( "Spec p.15 sum example is pruned (no solution)"
+      , solveText "int: n = 8; array[1..n] of var 1..n: q; constraint sum(i in 1..n)(q[i] + i) = 42; solve satisfy;"
+            == Just Nothing )
+    , ( "Large satisfiable sum is found"
+      , fmap (fmap (sum . map snd)) (solveText "array[1..9] of var 0..9: q; constraint sum(q) = 79; solve satisfy;")
+            == Just (Just 79) )
+    , ( "Reachable target is not pruned"
+      , solveText "var 1..10: x; var 1..10: y; constraint x + y = 5; solve satisfy;"
+            == Just (Just [("x", 1), ("y", 4)]) )
+    , ( "Divisor that may be 0 is not used for pruning"
+      , solveText "var -1..1: d; var 1..3: x; constraint 6 / d = x * 2; solve satisfy;"
+            == Just (Just [("d", 1), ("x", 3)]) )
+    , ( "Optimisation keeps the optimum"
+      , solveText "array[1..4] of var 0..5: q; constraint sum(q) <= 7; solve maximize q[1] * 2 + q[2];"
+            == Just (Just [("q[1]", 5), ("q[2]", 2), ("q[3]", 0), ("q[4]", 0)]) )
+    , ( "Negation flips the interval"
+      , solveText "var -5..5: a; var -5..5: b; constraint -a - b = 10; solve satisfy;"
+            == Just (Just [("a", -5), ("b", -5)]) )
+    , ( "x = 8 makes x + y = 5 impossible (y in 1..10)"
+      , impossible [] [("x", Interval 1 10), ("y", Interval 1 10)] [("x", 8)]
+            (Compare OpEq (Add (Var "x") (Var "y")) (IntLit 5)) )
+    , ( "x = 3 keeps x + y = 5 possible"
+      , not (impossible [] [("x", Interval 1 10), ("y", Interval 1 10)] [("x", 3)]
+            (Compare OpEq (Add (Var "x") (Var "y")) (IntLit 5))) )
+    -- 2^62 * 4 wraps to 0 in a 64-bit Int, so the evaluator accepts
+    -- x = 1. Bounds outside the Int range must not prune that solution.
+    , ( "No pruning when a value may overflow Int"
+      , solveText "var 1..1: x; var 0..0: y; constraint x * 4611686018427387904 * 4 + y = 0; solve satisfy;"
+            == Just (Just [("x", 1), ("y", 0)]) )
+    , ( "No bounds through a divisor interval containing 0"
+      , not (impossible [] [("d", Interval (-1) 1)] []
+            (Compare OpEq (Div (IntLit 6) (Var "d")) (IntLit 100))) )
+    ]
+:}
+
+boundsResults <- section "BOUNDS REASONING (PART E)" boundsTests
+
 -- The provided N-Queens example, read from the real input file and
 -- checked against every accepted answer in the expected output.
 nqueensSource <- readFile "examples/inputs/nqueens.mzn"
 nqueensAccepted <- map (sort . read) . filter (not . null) . lines <$> readFile "examples/expected_output/nqueens.out" :: IO [[(String, Int)]]
 nqueensResults <- section "NQUEENS (examples/inputs/nqueens.mzn)" [("Optimal solution is an accepted answer", fmap (fmap sort) (solveText nqueensSource) `elem` map (Just . Just) nqueensAccepted)]
 
-let results = searchResults ++ optimisationResults ++ edgeResults ++ endToEndResults ++ arrayResults ++ validationResults ++ saveFormatResults ++ nqueensResults
+let results = searchResults ++ optimisationResults ++ edgeResults ++ endToEndResults ++ arrayResults ++ validationResults ++ saveFormatResults ++ boundsResults ++ nqueensResults
 putStrLn ("RESULT: " ++ show (length (filter id results)) ++ "/" ++ show (length results) ++ " tests passed")
