@@ -55,6 +55,8 @@ data Expr
     | Div Expr Expr
     | Pow Expr Expr
     | Neg Expr
+    | Mod Expr Expr -- Part E: x mod y (Haskell mod, sign of the divisor)
+    | Abs Expr -- Part E: abs(x)
     | NumericMacroExpr NumericMacro (MacroInput Expr)
     | ArrayAccess Identifier Expr
     deriving (Eq, Show)

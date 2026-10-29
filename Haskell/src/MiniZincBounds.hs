@@ -111,6 +111,13 @@ boundsOf arrays vars env = go
         pure (corners div dividend divisor)
     step (Pow _ _) = Nothing
     step (Neg a) = neg <$> go a
+    step (Abs a) = magnitude <$> go a
+    -- Haskell's mod takes the sign of the divisor and is smaller than it
+    -- in size, so the result depends only on the divisor's interval.
+    step (Mod _ b) = do
+        divisor@(Interval c d) <- go b
+        guard (not (divisor `contains` 0))
+        pure (if c > 0 then Interval 0 (d - 1) else Interval (c + 1) 0)
     step (NumericMacroExpr macro input) =
         aggregate macro =<< nonEmpty =<< sequenceA (itemBounds input)
     step (ArrayAccess name index) = do
@@ -134,6 +141,13 @@ boundsOf arrays vars env = go
 -- | Interval of the negation of every value.
 neg :: Interval -> Interval
 neg (Interval a b) = Interval (negate b) (negate a)
+
+-- | Interval of the absolute value of every value.
+magnitude :: Interval -> Interval
+magnitude i@(Interval a b)
+    | a >= 0 = i
+    | b <= 0 = neg i
+    | otherwise = Interval 0 (max (negate a) b)
 
 -- | Interval of sum, min or max over a non-empty list of intervals.
 -- Every partial sum, whatever order the evaluator adds in, lies between

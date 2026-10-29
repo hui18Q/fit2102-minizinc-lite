@@ -56,13 +56,13 @@ evalPartial arrays env = go
     go (Add a b) = (+) <$> go a <*> go b
     go (Sub a b) = (-) <$> go a <*> go b
     go (Mul a b) = (*) <$> go a <*> go b
-    go (Div a b) = case go b of
-        Known 0 -> Invalid -- invalid even if the numerator is unknown
-        divisor -> div <$> go a <*> divisor
+    go (Div a b) = divideBy div a b
+    go (Mod a b) = divideBy mod a b
     go (Pow a b) = case go b of
         Known e | e < 0 -> Invalid
         power -> (^) <$> go a <*> power
     go (Neg a) = negate <$> go a
+    go (Abs a) = abs <$> go a
     go (NumericMacroExpr macro input) =
         numericMacro macro (exprItems arrays env input)
     -- The index must be known before we know which element to read,
@@ -71,6 +71,24 @@ evalPartial arrays env = go
         Known i -> element arrays env name i
         Unknown -> Unknown
         Invalid -> Invalid
+
+    -- div and mod: a zero divisor is invalid even if the numerator is
+    -- still unknown. The result is computed as an Integer, because
+    -- minBound `div` (-1) does not fit in Int and would throw an
+    -- exception; a result outside Int is an invalid assignment instead.
+    divideBy op a b = case (go a, go b) of
+        (_, Known 0) -> Invalid
+        (Known x, Known y) ->
+            fromIntegerChecked (op (toInteger x) (toInteger y))
+        -- Otherwise one side is Unknown or Invalid; *> keeps Invalid.
+        (x, y) -> x *> y
+
+-- An Integer result as an Int, or Invalid if it does not fit.
+fromIntegerChecked :: Integer -> EvalStatus Int
+fromIntegerChecked r
+    | toInteger (minBound :: Int) <= r && r <= toInteger (maxBound :: Int) =
+        Known (fromInteger r)
+    | otherwise = Invalid
 
 -- Reads element i of an array: Invalid if the index is out of
 -- bounds (even before the element is assigned), Unknown if the element is not assigned yet.

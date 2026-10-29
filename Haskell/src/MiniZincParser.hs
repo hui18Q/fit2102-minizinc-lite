@@ -35,6 +35,7 @@ reservedWords =
     , "satisfy", "maximize", "minimize"
     , "sum", "min", "max"
     , "all", "any", "allDifferent"
+    , "mod", "abs"
     ]
 
 -- Parses an identifier that is not a reserved word.
@@ -187,12 +188,18 @@ arrayAccessParser constants =
         <$> identifier
         <*> (symbol "[" *> expressionParser constants <* symbol "]")
 
+-- Parses abs(<expr>), the absolute value (Part E).
+absParser :: Constants -> Parser Expr
+absParser constants =
+    Abs <$> (keyword "abs" *> parenthesised (expressionParser constants))
+
 -- Parses a literal, array element, variable, or parenthesised
 -- expression. q[...] is tried before a plain variable, otherwise
 -- q would be read on its own and leave [...] unconsumed.
 atomParser :: Constants -> Parser Expr
 atomParser constants =
     numericMacroParser constants
+        <|> absParser constants
         <|> (IntLit <$> natural)
         <|> arrayAccessParser constants
         <|> (Var <$> identifier)
@@ -204,11 +211,13 @@ additionOperator =
     (Add <$ symbol "+")
         <|> (Sub <$ symbol "-")
 
--- Parses the multiplication and division operators.
+-- Parses the multiplication, division and mod operators, which share
+-- one precedence level. mod is a keyword, so "model" is not read as it.
 multiplicationOperator :: Parser (Expr -> Expr -> Expr)
 multiplicationOperator =
     (Mul <$ symbol "*")
         <|> (Div <$ symbol "/")
+        <|> (Mod <$ keyword "mod")
 
 -- Parses terms and combines them left-associatively.
 chainLeft
@@ -371,6 +380,8 @@ exprRefs (Mul a b) = exprRefs a ++ exprRefs b
 exprRefs (Div a b) = exprRefs a ++ exprRefs b
 exprRefs (Pow a b) = exprRefs a ++ exprRefs b
 exprRefs (Neg a) = exprRefs a
+exprRefs (Mod a b) = exprRefs a ++ exprRefs b
+exprRefs (Abs a) = exprRefs a
 exprRefs (NumericMacroExpr _ input) = macroRefs exprRefs input
 exprRefs (ArrayAccess name index) = ArrayRef name : exprRefs index
 
