@@ -13,6 +13,7 @@ import MiniZincEval
     ( ArrayLengths
     , Env
     , EvalStatus (..)
+    , arrayIndices
     , domainValues
     , elementName
     , evalConstraintPartial
@@ -34,7 +35,7 @@ expandDeclaration declaration = [declaration]
 -- Expands an array into individually named decision variables.
 expandArray :: Identifier -> Int -> Domain -> [Declaration]
 expandArray name len dom =
-    [VariableDeclaration (elementName name i) dom | i <- [1 .. len]]
+    [VariableDeclaration (elementName name i) dom | i <- arrayIndices len]
 
 -- Search state: values found so far, declarations left, and fixed data.
 data ConstraintProblem = ConstraintProblem
@@ -124,7 +125,6 @@ optimal key objective results =
             [evalPartial (searchArrays p) (environment p) objective]
         ]
 
--- Evaluates all constraints under the current assignment.
 constraintResults :: ConstraintProblem -> [EvalStatus Bool]
 constraintResults p =
     map

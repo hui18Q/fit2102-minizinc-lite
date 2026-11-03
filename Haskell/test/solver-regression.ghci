@@ -9,7 +9,7 @@
 :module + Assignment Instances
 import Data.List (sort)
 import MiniZincEval (EvalStatus (..), evalConstraintPartial, evalPartial)
-import MiniZincBounds (Interval (..), boundsOf, impossible)
+:module + *MiniZincBounds
 
 :{
 -- Prints the outcome of one named test and returns it.

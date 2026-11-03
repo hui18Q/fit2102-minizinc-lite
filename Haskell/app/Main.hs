@@ -74,6 +74,6 @@ main =
                 Solved env -> do
                     saved <- liftIO (try (saveSolution env))
                     case saved :: Either IOException FilePath of
-                        Left err ->
-                            jsonResponse [("error", "Save failed: " ++ show err)]
+                        Left err -> jsonResponse
+                            [("error", "Save failed: " ++ show err)]
                         Right file -> jsonResponse [("saved", file)]

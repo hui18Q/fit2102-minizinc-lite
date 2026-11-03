@@ -3,7 +3,7 @@ module MiniZincParser
     ) where
 
 import Control.Applicative (many, some, (<|>))
-import Control.Monad (unless, when)
+import Control.Monad (unless)
 import Data.Char (isAlphaNum)
 import Instances (ParseError (UnexpectedString), Parser)
 import Parser
@@ -12,7 +12,7 @@ import Parser
     )
 
 import MiniZincADT
-import MiniZincEval (Env, evalExpr, hasDuplicates)
+import MiniZincEval (Env, evalExpr, firstIndex, hasDuplicates)
 
 --------------------------------------------------------------------------------
 -- Lexical parsers
@@ -29,7 +29,6 @@ rawIdentifier =
   where
     validPart c = isAlphaNum c || c == '_'
 
--- Words reserved by the MiniZinc-Lite language.
 reservedWords :: [String]
 reservedWords =
     [ "var", "int", "constraint", "solve"
@@ -40,21 +39,23 @@ reservedWords =
     , "mod", "abs"
     ]
 
+-- Fails with the given message unless the condition holds.
+require :: Bool -> String -> Parser ()
+require holds message = unless holds (failed (UnexpectedString message))
+
 -- Parses an identifier that is not a reserved word.
 identifier :: Parser String
 identifier = do
     name <- rawIdentifier
-    if name `elem` reservedWords
-        then failed (UnexpectedString name)
-        else pure name
+    require (name `notElem` reservedWords) name
+    pure name
 
 -- Parses a keyword as a complete word.
 keyword :: String -> Parser String
 keyword expected = do
     actual <- rawIdentifier
-    if actual == expected
-        then pure actual
-        else failed (UnexpectedString actual)
+    require (actual == expected) actual
+    pure actual
 
 -- Parses digits only, unlike the provided int, which also reads a sign.
 -- A minus is then always the unary operator (Neg), never part of a literal.
@@ -72,11 +73,10 @@ type Constants = Env
 signed :: Parser Int -> Parser Int
 signed p = negate <$> (symbol "-" *> p) <|> p
 
--- Parses a signed integer literal.
 signedInteger :: Parser Int
 signedInteger = signed natural
 
--- Looks up a previously declared constant.
+-- Fails unless the name is a constant declared earlier.
 constantValue :: Constants -> Parser Int
 constantValue constants = do
     name <- identifier
@@ -95,9 +95,8 @@ rangeParser constants = do
     lo <- domainBound constants
     _ <- symbol ".."
     hi <- domainBound constants
-    if lo <= hi
-        then pure (Range lo hi)
-        else failed (UnexpectedString "Invalid range")
+    require (lo <= hi) "Invalid range"
+    pure (Range lo hi)
 
 -- Parses a finite set containing distinct integers.
 finiteSetParser :: Parser Domain
@@ -105,9 +104,8 @@ finiteSetParser = do
     _ <- symbol "{"
     values <- signedInteger `sepBy1` commaTok
     _ <- symbol "}"
-    if hasDuplicates values
-        then failed (UnexpectedString "Duplicate set values")
-        else pure (FiniteSet values)
+    require (not (hasDuplicates values)) "Duplicate set values"
+    pure (FiniteSet values)
 
 -- Parses either a range or a finite set.
 domainParser :: Constants -> Parser Domain
@@ -129,7 +127,6 @@ varBody constants =
         <$> (keyword "var" *> domainParser constants)
         <*> (symbol ":" *> identifier <* symbol ";")
 
--- Parses a variable declaration with its domain.
 variableDeclaration :: Constants -> Parser Declaration
 variableDeclaration constants =
     (\(dom, name) -> VariableDeclaration name dom) <$> varBody constants
@@ -140,8 +137,7 @@ arrayLength :: Constants -> Parser Int
 arrayLength constants = do
     lower <- keyword "array" *> symbol "[" *> natural
     len <- symbol ".." *> domainBound constants <* symbol "]" <* keyword "of"
-    unless (lower == 1 && len >= 1)
-        (failed (UnexpectedString "Invalid array bounds"))
+    require (lower == firstIndex && len >= 1) "Invalid array bounds"
     pure len
 
 -- Parses an array declaration such as array[1..n] of var 1..n: q;
@@ -208,7 +204,6 @@ atomParser constants =
         <|> (Var <$> identifier)
         <|> parenthesised (expressionParser constants)
 
--- Parses the addition and subtraction operators.
 additionOperator :: Parser (Expr -> Expr -> Expr)
 additionOperator =
     (Add <$ symbol "+")
@@ -257,12 +252,10 @@ comparisonParser constants =
         <*> comparisonOperator
         <*> expressionParser constants
 
--- Parses either a boolean macro or a comparison.
 constraintBody :: Constants -> Parser Constraint
 constraintBody constants =
     booleanMacroParser constants <|> comparisonParser constants
 
--- Parses a complete constraint statement.
 constraintParser :: Constants -> Parser Constraint
 constraintParser constants =
     keyword "constraint"
@@ -273,7 +266,6 @@ constraintParser constants =
 -- Macro parsers
 --------------------------------------------------------------------------------
 
--- Parses p surrounded by parentheses.
 parenthesised :: Parser a -> Parser a
 parenthesised p = symbol "(" *> p <* symbol ")"
 
@@ -310,14 +302,12 @@ macroArgs constants item =
 macroCall :: Constants -> String -> Parser a -> Parser (MacroInput a)
 macroCall constants name item = keyword name *> macroArgs constants item
 
--- Parses the name of a numeric macro.
 numericMacroName :: Parser NumericMacro
 numericMacroName =
         (Sum <$ keyword "sum")
     <|> (Minimum <$ keyword "min")
     <|> (Maximum <$ keyword "max")
 
--- Parses a numeric macro as an expression.
 numericMacroParser :: Constants -> Parser Expr
 numericMacroParser constants =
     NumericMacroExpr
@@ -338,14 +328,12 @@ booleanMacroParser constants =
 -- Solve directives
 --------------------------------------------------------------------------------
 
--- Parses one of the three supported solve goals.
 solveGoalParser :: Constants -> Parser SolverGoal
 solveGoalParser constants =
         (Satisfy <$ keyword "satisfy")
     <|> (Minimize <$> (keyword "minimize" *> expressionParser constants))
     <|> (Maximize <$> (keyword "maximize" *> expressionParser constants))
 
--- Parses a complete solve directive.
 solveDirectiveParser :: Constants -> Parser SolverGoal
 solveDirectiveParser constants =
     keyword "solve"
@@ -364,7 +352,6 @@ data Scope = Scope
     , scopeArrays :: [Identifier]
     }
 
--- The scope at the start of a program.
 emptyScope :: Scope
 emptyScope = Scope [] [] []
 
@@ -375,7 +362,6 @@ data Reference
     | ArrayRef Identifier
     deriving (Eq, Show)
 
--- References made by an expression.
 exprRefs :: Expr -> [Reference]
 exprRefs (IntLit _) = []
 exprRefs (Var name) = [ScalarRef name]
@@ -398,14 +384,12 @@ macroRefs _ (WholeArray name) = [ArrayRef name]
 macroRefs refs (Generator name _ item) =
     filter (/= ScalarRef name) (refs item)
 
--- References made by a constraint.
 constraintRefs :: Constraint -> [Reference]
 constraintRefs (Compare _ a b) = exprRefs a ++ exprRefs b
 constraintRefs (All input) = macroRefs constraintRefs input
 constraintRefs (Any input) = macroRefs constraintRefs input
 constraintRefs (AllDifferent input) = macroRefs exprRefs input
 
--- References made by a solve goal.
 goalRefs :: SolverGoal -> [Reference]
 goalRefs Satisfy = []
 goalRefs (Minimize e) = exprRefs e
@@ -415,8 +399,7 @@ goalRefs (Maximize e) = exprRefs e
 -- a scalar use must not name an array, an array use must.
 checkReferences :: Scope -> [Reference] -> Parser ()
 checkReferences scope refs =
-    unless (all validRef refs)
-        (failed (UnexpectedString "Invalid identifier use"))
+    require (all validRef refs) "Invalid identifier use"
   where
     validRef (ScalarRef name) =
         name `elem` scopeNames scope && name `notElem` scopeArrays scope
@@ -425,8 +408,8 @@ checkReferences scope refs =
 -- Records a new name, rejecting duplicates.
 addName :: Scope -> Identifier -> Parser Scope
 addName scope name = do
-    when (name `elem` scopeNames scope)
-        (failed (UnexpectedString ("Duplicate identifier " ++ name)))
+    require (name `notElem` scopeNames scope)
+        ("Duplicate identifier " ++ name)
     pure scope {scopeNames = name : scopeNames scope}
 
 -- Adds a declaration to the scope. Constants are evaluated using
@@ -490,6 +473,6 @@ program scope =
 -- Parser
 --------------------------------------------------------------------------------
 
--- Parses a complete MiniZinc-Lite model.
+-- Skips leading whitespace, then parses a whole model.
 miniZincParser :: Parser ADT
 miniZincParser = spaces *> program emptyScope

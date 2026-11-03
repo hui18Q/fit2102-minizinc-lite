@@ -2,10 +2,8 @@
 -- expression can still take, so a branch is pruned only when a comparison
 -- cannot hold. If safe bounds cannot be found, nothing is pruned.
 module MiniZincBounds
-    ( Interval (..)
-    , VarBounds
+    ( VarBounds
     , domainInterval
-    , boundsOf
     , impossible
     ) where
 
@@ -16,7 +14,8 @@ import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import Data.Maybe (fromMaybe)
 
 import MiniZincADT
-import MiniZincEval (ArrayLengths, Env, elementName, macroItems)
+import MiniZincEval
+    (ArrayLengths, Env, arrayIndices, elementName, firstIndex, macroItems)
 
 -- | An inclusive range [low, high] of possible values. Integer is used
 -- so that products of large bounds cannot overflow.
@@ -41,7 +40,6 @@ hull (Interval a b) (Interval c d) = Interval (min a c) (max b d)
 pointwise :: (Integer -> Integer -> Integer) -> Interval -> Interval -> Interval
 pointwise f (Interval a b) (Interval c d) = Interval (f a c) (f b d)
 
--- | True when the interval contains the value.
 contains :: Interval -> Integer -> Bool
 contains (Interval a b) x = a <= x && x <= b
 
@@ -96,33 +94,30 @@ boundsOf arrays vars env = go
     step (Pow _ _) = Nothing
     step (Neg a) = neg <$> go a
     step (Abs a) = magnitude <$> go a
-    -- Haskell's mod takes the sign of the divisor and is smaller than it
-    -- in size, so the result depends only on the divisor's interval.
     step (Mod _ b) = do
-        divisor@(Interval c d) <- go b
+        divisor <- go b
         guard (not (divisor `contains` 0))
-        pure (if c > 0 then Interval 0 (d - 1) else Interval (c + 1) 0)
+        pure (remainderRange divisor)
     step (NumericMacroExpr macro input) =
         aggregate macro =<< nonEmpty =<< sequenceA (itemBounds input)
     step (ArrayAccess name index) = do
         len <- lookup name arrays
         Interval lo hi <- go index
-        -- Indices outside 1..len make the assignment invalid anyway, so
-        -- only in-bounds elements can contribute a value.
-        let indices = [max 1 lo .. min (toInteger len) hi]
+        -- Indices outside the array make the assignment invalid anyway,
+        -- so only in-bounds elements can contribute a value.
+        let indices = [max (toInteger firstIndex) lo .. min (toInteger len) hi]
         elements <- traverse (go . Var . elementName name . fromInteger) indices
         foldr1 hull <$> nonEmpty elements
 
     -- Bounds of each item of a numeric macro input.
     itemBounds (WholeArray name) = case lookup name arrays of
-        Just len -> [go (ArrayAccess name (IntLit i)) | i <- [1 .. len]]
+        Just len -> [go (ArrayAccess name (IntLit i)) | i <- arrayIndices len]
         Nothing -> [Nothing]
     itemBounds input =
         [ boundsOf arrays vars itemEnv item
         | (itemEnv, item) <- macroItems env input
         ]
 
--- | Interval of the negation of every value.
 neg :: Interval -> Interval
 neg (Interval a b) = Interval (negate b) (negate a)
 
@@ -132,6 +127,14 @@ magnitude i@(Interval a b)
     | a >= 0 = i
     | b <= 0 = neg i
     | otherwise = Interval 0 (max (negate a) b)
+
+-- | Possible results of x `mod` d for d in a divisor interval that
+-- excludes 0. Haskell's mod takes the sign of the divisor and is smaller
+-- than it in size, so the result depends only on the divisor.
+remainderRange :: Interval -> Interval
+remainderRange (Interval c d)
+    | c > 0 = Interval 0 (d - 1)
+    | otherwise = Interval (c + 1) 0
 
 -- | Interval of sum, min or max. Every partial sum, in any order, lies
 -- between the sum of negative lows and the sum of positive highs, so

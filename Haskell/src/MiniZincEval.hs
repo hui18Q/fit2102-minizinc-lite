@@ -7,6 +7,8 @@ module MiniZincEval
     , evalConstraintPartial
     , domainValues
     , elementName
+    , firstIndex
+    , arrayIndices
     , hasDuplicates
     , macroItems
     ) where
@@ -95,7 +97,7 @@ fromIntegerChecked r
 -- element is not assigned yet.
 element :: ArrayLengths -> Env -> Identifier -> Int -> EvalStatus Int
 element arrays env name i = case lookup name arrays of
-    Just len | 1 <= i && i <= len ->
+    Just len | firstIndex <= i && i <= len ->
         maybe Unknown Known (lookup (elementName name i) env)
     _ -> Invalid
 
@@ -120,7 +122,6 @@ macroItems env (Generator name dom item) =
     [((name, v) : env, item) | v <- domainValues dom]
 macroItems _ (WholeArray _) = []
 
--- Evaluates every item of a macro input.
 macroResults
     :: (Env -> a -> EvalStatus b) -> Env -> MacroInput a -> [EvalStatus b]
 -- A whole array of numbers is handled by exprItems; reaching here
@@ -140,7 +141,7 @@ exprItems arrays env input = macroResults (evalPartial arrays) env input
 -- Invalid if there is no such array (or its length is not positive).
 arrayElements :: ArrayLengths -> Env -> Identifier -> [EvalStatus Int]
 arrayElements arrays env name = case lookup name arrays of
-    Just len | len >= 1 -> [element arrays env name i | i <- [1 .. len]]
+    Just len | len >= 1 -> [element arrays env name i | i <- arrayIndices len]
     _ -> [Invalid]
 
 -- The values a domain allows, in increasing order for ranges.
@@ -160,7 +161,6 @@ numericMacro macro results
     aggregate Minimum = minimum
     aggregate Maximum = maximum
 
--- Applies a comparison operator to two integers.
 applyCompare :: CompareOperator -> Int -> Int -> Bool
 applyCompare OpEq = (==)
 applyCompare OpNe = (/=)
@@ -184,7 +184,6 @@ evalConstraintPartial arrays env = go
         anyStatus (macroResults (evalConstraintPartial arrays) env input)
     go (AllDifferent input) = allDifferentStatus (exprItems arrays env input)
 
--- True for an invalid result.
 isInvalid :: EvalStatus a -> Bool
 isInvalid Invalid = True
 isInvalid _ = False
@@ -215,7 +214,6 @@ allDifferentStatus results
   where
     known = [v | Known v <- results]
 
--- True when a list contains a repeated element.
 hasDuplicates :: Eq a => [a] -> Bool
 hasDuplicates xs = length xs /= length (nub xs)
 
@@ -224,3 +222,11 @@ hasDuplicates xs = length xs /= length (nub xs)
 -- look them up, so both always agree. It is also the output format.
 elementName :: Identifier -> Int -> Identifier
 elementName name i = name ++ "[" ++ show i ++ "]"
+
+-- Array indices start at the literal 1, as the specification requires.
+firstIndex :: Int
+firstIndex = 1
+
+-- The indices of an array of the given length, in order.
+arrayIndices :: Int -> [Int]
+arrayIndices len = [firstIndex .. len]

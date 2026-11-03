@@ -40,3 +40,4 @@ assets/Linux
 *.cabal
 /Haskell/output/
 /Haskell/examples/output/
+/Haskell/solution_*.out
