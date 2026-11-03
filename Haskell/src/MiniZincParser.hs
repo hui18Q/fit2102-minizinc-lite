@@ -7,7 +7,9 @@ import Control.Monad (unless, when)
 import Data.Char (isAlphaNum)
 import Instances (ParseError (UnexpectedString), Parser)
 import Parser
-    ( alpha, digit, eof, failed, satisfy, sepBy1, spaces, stringTok, tok)
+    ( alpha, commaTok, digit, eof, failed, satisfy, sepBy1, spaces, stringTok
+    , tok
+    )
 
 import MiniZincADT
 import MiniZincEval (Env, evalExpr, hasDuplicates)
@@ -100,7 +102,7 @@ rangeParser constants = do
 finiteSetParser :: Parser Domain
 finiteSetParser = do
     _ <- symbol "{"
-    values <- signedInteger `sepBy1` symbol ","
+    values <- signedInteger `sepBy1` commaTok
     _ <- symbol "}"
     if hasDuplicates values
         then failed (UnexpectedString "Duplicate set values")
@@ -224,7 +226,8 @@ chainLeft
     :: Parser a
     -> Parser (a -> a -> a)
     -> Parser a
-chainLeft term operator = foldl apply <$> term <*> many ((,) <$> operator <*> term)
+chainLeft term operator =
+    foldl apply <$> term <*> many ((,) <$> operator <*> term)
   where
     apply acc (combine, right) = combine acc right
 
@@ -232,7 +235,8 @@ chainLeft term operator = foldl apply <$> term <*> many ((,) <$> operator <*> te
 -- Comparison operators and constraints
 --------------------------------------------------------------------------------
 
--- Parses a MiniZinc comparison operator, longer operators are tried first so "<=" is not read as "<".
+-- Parses a MiniZinc comparison operator. Longer operators are tried
+-- first so "<=" is not read as "<".
 comparisonOperator :: Parser CompareOperator
 comparisonOperator =
         (OpNe <$ symbol "!=")
@@ -276,7 +280,7 @@ parenthesised p = symbol "(" *> p <* symbol ")"
 listParser :: Parser a -> Parser [a]
 listParser item =
     symbol "["
-        *> (item `sepBy1` symbol ",")
+        *> (item `sepBy1` commaTok)
         <* symbol "]"
 
 -- Parses a single-bracket macro input: a literal list [e1, e2, ...]
@@ -428,7 +432,9 @@ addName scope name = do
         (failed (UnexpectedString ("Duplicate identifier " ++ name)))
     pure scope {scopeNames = name : scopeNames scope}
 
--- Adds a declaration to the scope. Constants are evaluated using earlier constants only, so references to variables, undeclared, names and division by zero are all rejected here.
+-- Adds a declaration to the scope. Constants are evaluated using
+-- earlier constants only, so references to variables, undeclared names
+-- and division by zero are all rejected here.
 declare :: Scope -> Declaration -> Parser Scope
 declare scope (ConstantDeclaration name e) = do
     value <-

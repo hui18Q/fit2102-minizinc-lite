@@ -20,11 +20,14 @@ after a construct has been read; they are listed in
 ## 1. Lexical structure
 
 ```bnf
-<identifier>  ::= <letter> <ident-rest>
+<identifier>  ::= <letter> <ident-rest>     ; except the reserved words below
 <ident-rest>  ::= ε | <ident-char> <ident-rest>
 <ident-char>  ::= <letter> | <digit> | "_"
 
 <natural>     ::= <digit> | <digit> <natural>
+
+<digit>       ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+<letter>      ::= "a" | ... | "z" | "A" | ... | "Z"     ; and other letters
 ```
 
 - `<letter>` is any character accepted by `Data.Char.isAlpha`; `<digit>` is
@@ -189,20 +192,23 @@ How the rules encode this:
   `foldl`, since a combinator parser cannot be written left-recursively.)
 - In `<power>` the exponent is a `<unary>`, which contains `<power>` again,
   so `2^3^2` is `2^(3^2)` (right associative).
-- `<unary>` sits above `<power>`, so `-x^2` is `-(x^2)`.
-- `<unary>` sits below `<term>`, so `-x mod 3` is `(-x) mod 3` and
-  `2 * -3` is `2 * (-3)`.
+- The operand of unary `-` is a whole `<power>`, so `-x^2` is `-(x^2)`.
+- The operands of `*`, `/` and `mod` are `<unary>`s, so `-x mod 3` is
+  `(-x) mod 3` and `2 * -3` is `2 * (-3)`.
 
-Example derivation of `-x^2 + 1`:
+Parse tree of `-x^2 + 1`. The `^` is inside the unary `-`, so `x^2` is
+computed first:
 
 ```
-<expr> ⇒ <expr> "+" <term>
-       ⇒ <term> "+" <term>
-       ⇒ <unary> "+" <unary>
-       ⇒ "-" <unary> "+" <power>
-       ⇒ "-" <power> "+" <atom>
-       ⇒ "-" (<atom> "^" <unary>) "+" "1"
-       ⇒ "-" ("x" "^" "2") "+" "1"
+<expr>
+├── <expr> ─ <term> ─ <unary>
+│                      ├── "-"
+│                      └── <unary> ─ <power>
+│                                    ├── <atom> ─ "x"
+│                                    ├── "^"
+│                                    └── <unary> ─ <power> ─ <atom> ─ "2"
+├── "+"
+└── <term> ─ <unary> ─ <power> ─ <atom> ─ "1"
 ```
 
 ### 2.7 Solve directive
@@ -224,7 +230,7 @@ grammar but breaks one of them is rejected.
 | ---- | ------------------------ |
 | Every name is declared once (constants, variables and arrays share one namespace). | `var 1..3: x; var 1..5: x;` |
 | A name is declared before it is used (in statement order). | `constraint x > 1; var 1..3: x;` |
-| A constant's expression may only use earlier constants, and must evaluate (no division by zero). | `var 1..3: x; int: a = x + 1;`, `int: a = 5 / 0;` |
+| A constant's expression may only use earlier constants (no variables or arrays), and must evaluate (no division by zero). | `var 1..3: x; int: a = x + 1;`, `int: a = 5 / 0;` |
 | A range bound that is an identifier must be a declared constant. | `var 1..n: x; int: n = 3;` |
 | A range is non-empty: lower bound ≤ upper bound. | `var 5..1: x;` |
 | A finite set has no repeated values. | `var {1, 2, 1}: x;` |
@@ -255,6 +261,10 @@ Division or `mod` by zero, a negative exponent, an out-of-bounds index, or a
 `/` / `mod` result that does not fit in a 64-bit `Int` (such as
 `minBound / -1`) makes the current assignment invalid; it never stops the
 solver.
+
+`+`, `-`, `*`, `^` and `abs` use 64-bit `Int` arithmetic and wrap around on
+overflow, as in Haskell. Only `/` and `mod` check the range, because
+`minBound / -1` would otherwise throw an exception.
 
 ## 5. Complete example
 

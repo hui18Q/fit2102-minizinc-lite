@@ -34,8 +34,10 @@ instance Functor EvalStatus where
     fmap _ Unknown = Unknown
     fmap _ Invalid = Invalid
 
--- Invalid on either side wins over Unknown, so an invalid operand is detected even while the other operand is still unknown.
--- There is deliberately no Monad instance: Unknown >>= f cannot look past Unknown to find an Invalid, so ap would disagree with <*>.
+-- Invalid on either side wins over Unknown, so an invalid operand is
+-- detected even while the other operand is still unknown.
+-- There is deliberately no Monad instance: Unknown >>= f cannot look
+-- past Unknown to find an Invalid, so ap would disagree with <*>.
 instance Applicative EvalStatus where
     pure :: a -> EvalStatus a
     pure = Known
@@ -91,15 +93,17 @@ fromIntegerChecked r
     | otherwise = Invalid
 
 -- Reads element i of an array: Invalid if the index is out of
--- bounds (even before the element is assigned), Unknown if the element is not assigned yet.
+-- bounds (even before the element is assigned), Unknown if the
+-- element is not assigned yet.
 element :: ArrayLengths -> Env -> Identifier -> Int -> EvalStatus Int
 element arrays env name i = case lookup name arrays of
     Just len | 1 <= i && i <= len ->
         maybe Unknown Known (lookup (elementName name i) env)
     _ -> Invalid
 
--- Evaluates a complete expression; Nothing if any part is nunassigned or invalid.
--- Used for constants, which cannot refer to arrays, so no array lengths are needed.
+-- Evaluates a complete expression; Nothing if any part is unassigned
+-- or invalid. Used for constants, which cannot refer to arrays, so no
+-- array lengths are needed.
 evalExpr :: Env -> Expr -> Maybe Int
 evalExpr env expr = case evalPartial [] env expr of
     Known value -> Just value
@@ -109,8 +113,10 @@ evalExpr env expr = case evalPartial [] env expr of
 -- Macros and constraints
 --------------------------------------------------------------------------------
 
--- The items of a list or generator macro input, each paired with the environment it is evaluated in.
--- A generator binds its loop variable at the front of the environment, so it shadows any outer name with the same identifier.
+-- The items of a list or generator macro input, each paired with the
+-- environment it is evaluated in. A generator binds its loop variable
+-- at the front of the environment, so it shadows any outer name with
+-- the same identifier.
 -- Shared by evaluation and bounds reasoning.
 macroItems :: Env -> MacroInput a -> [(Env, a)]
 macroItems env (Explicit items) = map ((,) env) items
@@ -133,7 +139,8 @@ exprItems :: ArrayLengths -> Env -> MacroInput Expr -> [EvalStatus Int]
 exprItems arrays env (WholeArray name) = arrayElements arrays env name
 exprItems arrays env input = macroResults (evalPartial arrays) env input
 
--- Every element of an array in index order, so unassigned elements stay Unknown and partial pruning still works.
+-- Every element of an array in index order, so unassigned elements
+-- stay Unknown and partial pruning still works.
 -- Invalid if there is no such array (or its length is not positive).
 arrayElements :: ArrayLengths -> Env -> Identifier -> [EvalStatus Int]
 arrayElements arrays env name = case lookup name arrays of
