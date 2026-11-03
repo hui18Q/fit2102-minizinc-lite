@@ -66,7 +66,7 @@ data Expr
     | ArrayAccess Identifier Expr
     deriving (Eq, Show)
 
--- The six comparison operators (MiniZinc-Lite has no ==).
+-- The six comparison operators.
 data CompareOperator
     = OpEq
     | OpNe

@@ -1,5 +1,5 @@
 # MiniZinc-Lite Grammar (BNF)
--- This BNF file structure/format was suggested by chatgpt; reviewed and fine-tuned by claude. I've also reviewed tje final work, and contents are from myself.
+-- This BNF file structure/format was suggested by chatgpt; reviewed and refined by claude. I've also reviewed the final work, and contents are from myself.
 
 ## Notation
 
