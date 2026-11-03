@@ -36,6 +36,7 @@ expandArray :: Identifier -> Int -> Domain -> [Declaration]
 expandArray name len dom =
     [VariableDeclaration (elementName name i) dom | i <- [1 .. len]]
 
+-- Search state: values found so far, declarations left, and fixed data.
 data ConstraintProblem = ConstraintProblem
     { searchConstants :: [Binding]
     , solvedVars :: [Binding]
@@ -108,11 +109,9 @@ environment p = solvedVars p ++ searchConstants p
 solution :: ConstraintProblem -> [Binding]
 solution = reverse . solvedVars
 
--- Picks the solution whose objective value is smallest under key:
--- id for minimize, Down for maximize (Down reverses the order).
--- Assignments whose objective is invalid are skipped, like any
--- other invalid assignment. nonEmpty means minimumBy never sees an
--- empty list. Ties keep the first solution found.
+-- The solution with the best objective: key is id for minimize and Down
+-- for maximize. Invalid objectives are skipped; nonEmpty keeps minimumBy
+-- total, and ties keep the first solution found.
 optimal
     :: Ord k => (Int -> k) -> Expr -> [ConstraintProblem] -> Maybe [Binding]
 optimal key objective results =
@@ -144,7 +143,6 @@ consistent p = and (zipWith viable (searchConstraints p) (constraintResults p))
     provedImpossible =
         impossible (searchArrays p) (searchBounds p) (environment p)
 
--- Accept only when every constraint is fully satisfied. Checked again
--- once all variables are assigned, because Known True is not final.
+-- Accepts a complete assignment only if every constraint is Known True.
 allSatisfied :: ConstraintProblem -> Bool
 allSatisfied = all (== Known True) . constraintResults

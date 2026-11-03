@@ -56,7 +56,8 @@ keyword expected = do
         then pure actual
         else failed (UnexpectedString actual)
 
--- Parses one or more digits as a non-negative integer.
+-- Parses digits only, unlike the provided int, which also reads a sign.
+-- A minus is then always the unary operator (Neg), never part of a literal.
 natural :: Parser Int
 natural = tok (read <$> some digit)
 
@@ -389,12 +390,8 @@ exprRefs (Abs a) = exprRefs a
 exprRefs (NumericMacroExpr _ input) = macroRefs exprRefs input
 exprRefs (ArrayAccess name index) = ArrayRef name : exprRefs index
 
--- References made by a macro input. A generator binder is a local
--- scalar, so its uses in the body are removed. It may reuse an outer
--- name: inside the body it shadows that name, matching the evaluator,
--- which puts the binder at the front of the environment. Array
--- elements are stored as q[1], q[2], ..., so a binder named q does
--- not hide the elements of an array q.
+-- References made by a macro input. A generator binder is local, so its
+-- uses in the body are dropped. A binder q does not hide q[1], q[2], ...
 macroRefs :: (a -> [Reference]) -> MacroInput a -> [Reference]
 macroRefs refs (Explicit items) = concatMap refs items
 macroRefs _ (WholeArray name) = [ArrayRef name]
@@ -467,10 +464,9 @@ checked refs scope p = do
     checkReferences scope (refs x)
     pure x
 
--- Parses statements in any order until the final solve directive,
--- which must be followed by end of input. A declaration changes the
--- scope for later statements, so it needs monadic bind; a constraint
--- does not, so applicative style is enough.
+-- Parses statements in any order up to the final solve directive and end
+-- of input. A declaration changes the scope for later statements, so it
+-- needs >>=; a constraint does not, so applicative style is enough.
 program :: Scope -> Parser ADT
 program scope =
     (ADT [] [] <$> checked goalRefs scope solveDirective <* eof)

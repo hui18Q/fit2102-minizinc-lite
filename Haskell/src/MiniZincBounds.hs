@@ -1,20 +1,6 @@
--- | Part E extension: bounds reasoning (interval pruning).
---
--- The evaluator can only decide a constraint once every variable in it
--- has a value, so sum(q) = 42 stays Unknown until the whole array is
--- assigned. Here we compute, for a partial assignment, an interval that
--- is guaranteed to contain every value an expression can still take
--- (assigned variables are points, unassigned ones span their domain).
--- If a comparison cannot hold for any pair of values in its two
--- intervals, the constraint is certainly violated and the branch can be
--- pruned early.
---
--- Soundness: every interval over-approximates the real set of values,
--- so a branch is pruned only when no completion can satisfy the
--- constraint. Whenever an interval cannot be computed safely (powers,
--- division by an interval containing 0, or values outside the range of
--- Int, where the evaluator's arithmetic would wrap around), the result
--- is Nothing and nothing is pruned.
+-- | Part E: bounds reasoning. Intervals over-approximate the values an
+-- expression can still take, so a branch is pruned only when a comparison
+-- cannot hold. If safe bounds cannot be found, nothing is pruned.
 module MiniZincBounds
     ( Interval (..)
     , VarBounds
@@ -68,10 +54,9 @@ fitsInt i@(Interval a b)
         Just i
     | otherwise = Nothing
 
--- | Applies an operation to every pair of endpoints and keeps the
--- extremes. Correct for operations that are monotone in each argument
--- on the given intervals, such as (*) and, for a divisor interval that
--- excludes 0, integer division.
+-- | Applies f to every pair of endpoints and keeps the extremes. Correct
+-- for operations monotone in each argument, such as (*), and div when
+-- the divisor interval excludes 0.
 corners :: (Integer -> Integer -> Integer) -> Interval -> Interval -> Interval
 corners f (Interval a b) (Interval c d) =
     Interval (minimum values) (maximum values)
@@ -86,10 +71,9 @@ domainInterval (FiniteSet xs@(_ : _)) =
     Just (Interval (toInteger (minimum xs)) (toInteger (maximum xs)))
 domainInterval _ = Nothing
 
--- | Possible values of an expression under a partial assignment, or
--- Nothing when no safe interval is known. Names in env (assigned
--- variables, constants, generator binders) are points; other variables
--- use their domain interval.
+-- | Possible values of an expression, or Nothing when no safe interval is
+-- known. Names in env (assigned values, constants, generator binders) are
+-- points; other variables use their domain interval.
 boundsOf :: ArrayLengths -> VarBounds -> Env -> Expr -> Maybe Interval
 boundsOf arrays vars env = go
   where
@@ -149,9 +133,8 @@ magnitude i@(Interval a b)
     | b <= 0 = neg i
     | otherwise = Interval 0 (max (negate a) b)
 
--- | Interval of sum, min or max over a non-empty list of intervals.
--- Every partial sum, whatever order the evaluator adds in, lies between
--- the sum of the negative lows and the sum of the positive highs, so
+-- | Interval of sum, min or max. Every partial sum, in any order, lies
+-- between the sum of negative lows and the sum of positive highs, so
 -- checking that range rules out overflow inside the sum.
 aggregate :: NumericMacro -> NonEmpty Interval -> Maybe Interval
 aggregate Sum items = foldr1 (pointwise (+)) items <$ fitsInt partialSums

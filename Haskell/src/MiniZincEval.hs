@@ -34,10 +34,9 @@ instance Functor EvalStatus where
     fmap _ Unknown = Unknown
     fmap _ Invalid = Invalid
 
--- Invalid on either side wins over Unknown, so an invalid operand is
--- detected even while the other operand is still unknown.
--- There is deliberately no Monad instance: Unknown >>= f cannot look
--- past Unknown to find an Invalid, so ap would disagree with <*>.
+-- Invalid on either side wins over Unknown, even if the other is unknown.
+-- No Monad instance on purpose: Unknown >>= f cannot look past Unknown
+-- to find an Invalid, so ap would disagree with <*>.
 instance Applicative EvalStatus where
     pure :: a -> EvalStatus a
     pure = Known
@@ -74,10 +73,9 @@ evalPartial arrays env = go
         Unknown -> Unknown
         Invalid -> Invalid
 
-    -- div and mod: a zero divisor is invalid even if the numerator is
-    -- still unknown. The result is computed as an Integer, because
-    -- minBound `div` (-1) does not fit in Int and would throw an
-    -- exception; a result outside Int is an invalid assignment instead.
+    -- div and mod: a zero divisor is invalid even if the numerator is unknown.
+    -- The result is computed as an Integer because minBound `div` (-1)
+    -- overflows Int and would throw; a result outside Int is invalid.
     divideBy op a b = case (go a, go b) of
         (_, Known 0) -> Invalid
         (Known x, Known y) ->
@@ -113,11 +111,9 @@ evalExpr env expr = case evalPartial [] env expr of
 -- Macros and constraints
 --------------------------------------------------------------------------------
 
--- The items of a list or generator macro input, each paired with the
--- environment it is evaluated in. A generator binds its loop variable
--- at the front of the environment, so it shadows any outer name with
--- the same identifier.
--- Shared by evaluation and bounds reasoning.
+-- Items of a list or generator input, each with the environment it is
+-- evaluated in. A generator binder is put at the front of that
+-- environment, so it shadows outer names. Shared with bounds reasoning.
 macroItems :: Env -> MacroInput a -> [(Env, a)]
 macroItems env (Explicit items) = map ((,) env) items
 macroItems env (Generator name dom item) =
@@ -173,10 +169,9 @@ applyCompare OpLe = (<=)
 applyCompare OpGt = (>)
 applyCompare OpGe = (>=)
 
--- Evaluates a constraint under a partial assignment.
--- Known True is not final: an unknown part may still become
--- Invalid, so the solver must re-check every constraint once
--- all variables are assigned. Known False and Invalid are final.
+-- Evaluates a constraint under a partial assignment. Known False and
+-- Invalid are final, but Known True is not: an unknown part may still
+-- become Invalid, so the solver re-checks constraints at full assignments.
 evalConstraintPartial
     :: ArrayLengths -> Env -> Constraint -> EvalStatus Bool
 evalConstraintPartial arrays env = go
