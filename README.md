@@ -123,5 +123,4 @@ directory where `stack run` was started, usually `Haskell/`.
 
 ## AI Declaration
 
-ChatGPT(https://chatgpt.com/) and Claude(https://claude.com/) were used as learning and review aids during development.
-Comments are refined by Claude and ChatGPT. Claude and Chatgpt were also used to help organise and phrase this README based on the work. I reviewed and verified the final content.
+ChatGPT(https://chatgpt.com/) and Claude(https://claude.com/) were used throughout this assignment: for design suggestions, writing and refactoring parts of the Haskell and TypeScript code, refining comments, and organising the README and BNF. I reviewed and verified the final content.
