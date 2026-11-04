@@ -1,3 +1,5 @@
+-- AI usage: ChatGPT and Claude helped refactor the backtracking search
+-- and the optimal-solution selection.
 module MiniZincSolver
     ( solveProblem
     ) where

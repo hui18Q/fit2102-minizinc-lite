@@ -1,3 +1,5 @@
+-- AI usage: ChatGPT and Claude helped organise part of the module
+-- re-exports and write formatSolution.
 module Assignment
     ( ADT (..)
     , Declaration (..)

@@ -1,3 +1,4 @@
+-- AI usage: ChatGPT and Claude helped refactor parts of the parsers
 module MiniZincParser
     ( miniZincParser
     ) where

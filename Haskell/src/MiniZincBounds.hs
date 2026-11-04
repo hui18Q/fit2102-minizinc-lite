@@ -1,3 +1,6 @@
+-- AI usage: ChatGPT and Claude helped design part of the
+-- interval arithmetic for bounds reasoning.
+
 -- | Part E: bounds reasoning. Intervals over-approximate the values an
 -- expression can still take, so a branch is pruned only when a comparison
 -- cannot hold. If safe bounds cannot be found, nothing is pruned.

@@ -1,3 +1,5 @@
+-- AI usage: ChatGPT and Claude helped refactor part of the
+-- EvalStatus and its Functor instances, and the macro evaluation.
 module MiniZincEval
     ( Env
     , ArrayLengths
